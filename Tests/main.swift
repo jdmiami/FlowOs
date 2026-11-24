@@ -1,0 +1,12 @@
+import Foundation
+let valid = Plan(action: "app", title: "Orders", fields: ["Customer", "Quantity"])
+assert(Validation.miniApp(valid)?.fields.count == 2)
+assert(Validation.miniApp(Plan(action: "app", title: "", fields: ["X"])) == nil)
+assert(Validation.miniApp(Plan(action: "app", title: "Bad", fields: ["X", "X"])) == nil)
+assert(Validation.miniApp(Plan(action: "delete", title: "Bad", fields: ["X"])) == nil)
+assert(Validation.workflow(Plan(action: "workflow", title: "Morning", steps: ["Read calendar"])) != nil)
+assert(Validation.workflow(Plan(action: "workflow", title: "Morning", steps: [])) == nil)
+let encoded = try JSONEncoder().encode(Validation.miniApp(valid)!)
+let decoded = try JSONDecoder().decode(MiniApp.self, from: encoded)
+assert(decoded.title == "Orders")
+print("7 validation and serialization checks passed")

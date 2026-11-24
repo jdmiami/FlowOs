@@ -1,0 +1,10 @@
+build/
+DerivedData/
+*.xcodeproj/
+*.ipa
+*.p8
+*.p12
+*.mobileprovision
+*.litertlm
+.DS_Store
+.env
