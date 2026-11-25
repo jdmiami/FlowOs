@@ -8,3 +8,6 @@ DerivedData/
 *.litertlm
 .DS_Store
 .env
+
+Vendor/
+BonsaiResources/

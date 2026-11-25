@@ -10,18 +10,29 @@ targets:
   FlowOS:
     type: application
     platform: iOS
-    sources: [FlowOS, Shared]
+    sources:
+      - FlowOS
+      - Shared
+      - path: BonsaiResources
+        buildPhase: resources
     dependencies:
       - package: LiteRTLM
         product: LiteRTLM
+      - framework: Vendor/CLiteRT.xcframework
+        embed: true
+        codeSign: true
       - target: FlowWidgets
         embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.flowos.personal
+        SWIFT_OBJC_BRIDGING_HEADER: FlowOS/Bonsai/Bridging.h
+        HEADER_SEARCH_PATHS: "$(inherited) $(SRCROOT)/FlowOS/Bonsai"
+        CLANG_CXX_LANGUAGE_STANDARD: c++17
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
         SWIFT_VERSION: '5.0'
-        MARKETING_VERSION: '0.5.3'
-        CURRENT_PROJECT_VERSION: '8'
+        MARKETING_VERSION: '0.5.4'
+        CURRENT_PROJECT_VERSION: '9'
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_NSSupportsLiveActivities: YES
         INFOPLIST_KEY_CADisableMinimumFrameDurationOnPhone: YES
@@ -42,7 +53,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.flowos.personal.widgets
         SWIFT_VERSION: '5.0'
-        MARKETING_VERSION: '0.5.3'
-        CURRENT_PROJECT_VERSION: '8'
+        MARKETING_VERSION: '0.5.4'
+        CURRENT_PROJECT_VERSION: '9'
         SKIP_INSTALL: YES
         APPLICATION_EXTENSION_API_ONLY: YES

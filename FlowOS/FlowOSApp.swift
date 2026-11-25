@@ -38,6 +38,7 @@ struct RootView: View {
     @SceneStorage("flow.tab") private var tab = 0
     @State private var settings = false
     @State private var spatial = false
+    @State private var media = false
     @Environment(\.renderBudget) private var budget
     @State private var cloudSettings = false
     @State private var chatDraft = ""
@@ -56,7 +57,7 @@ struct RootView: View {
                 FlowGlassGroup {
                     HStack(spacing: 10) {
                 Button {
-                    if store.busy { navigate(store.activeMode == "app" ? 2 : store.activeMode == "workflow" ? 4 : 1) } else { cloudSettings = true }
+                    if store.busy { if store.activeMode == "image" {media=true} else { navigate(store.activeMode == "app" ? 2 : store.activeMode == "workflow" ? 4 : 1) } } else { cloudSettings = true }
                 } label: {
                     HStack(spacing: 6) {
                         Circle().fill(store.busy ? Palette.lavender : store.model != nil ? Color.green.opacity(0.8) : Color.gray).frame(width: 7, height: 7)
@@ -90,6 +91,7 @@ struct RootView: View {
         .alert(item:Binding(get:{settings ? nil : store.pendingCloud},set:{if !settings {store.pendingCloud=$0}})) { approval in
             cloudApprovalAlert(approval,store:store)
         }
+        .sheet(isPresented:$media) { BonsaiStudioView(studio:store.bonsai).environmentObject(store).presentationDragIndicator(.visible) }
         .sheet(isPresented:$spatial) { SpatialWorkspace().environmentObject(store).presentationDragIndicator(.visible) }
         .onAppear {
             withAnimation(reduced ? .easeOut(duration: 0.15) : FlowMotion.hero) { entered = true }
@@ -126,6 +128,7 @@ struct RootView: View {
                     homeTile("Connect", "Calls & email", "phone.bubble", Palette.mint, 3, nil)
                     homeTile("Automate", "Design a flow", "point.3.connected.trianglepath.dotted", Palette.lavender, 4, nil)
                 }
+                Button { media = true } label: { Label("Image Studio · Bonsai",systemImage:"photo.on.rectangle.angled").frame(maxWidth:.infinity) }.buttonStyle(FlowPrimary())
                 Button { spatial = true } label: { Label("Open spatial workspace",systemImage:"square.on.square").frame(maxWidth:.infinity) }.buttonStyle(FlowPrimary())
                 Text(budget.label).font(.caption.monospaced()).foregroundStyle(.secondary)
                 if store.busy { AgentProgressView() }

@@ -16,6 +16,12 @@ import SwiftUI
     @Published var activity: [String] = []
     @Published var activeMode = "chat"
     let cloud = CloudHub()
+    let bonsai = BonsaiStudio()
+    func beginImageGeneration()->Bool {
+        guard !busy,job==nil,pendingCloud==nil else{return false}
+        brain.unload();busy=true;activeMode="image";activity=[];live="";stage="Generating image locally";return true
+    }
+    func finishImageGeneration(_ message:String){stage=message;busy=false}
     @Published var pendingCloud: CloudApproval?
     struct CloudApproval: Identifiable { let id = UUID(); let text: String; let mode: String; let route: CloudRoute; var parentID: UUID? = nil }
     func backendLabel(_ mode:String) -> String { cloud.route(mode).map { $0.provider.title + " · " + $0.model } ?? "On-device AI" }
@@ -80,6 +86,7 @@ import SwiftUI
     }
     func stop() {
         guard busy else { return }
+        if activeMode == "image" {bonsai.cancel();return}
         stage = "Stopping inference…"
         job?.cancel()
         brain.stop()

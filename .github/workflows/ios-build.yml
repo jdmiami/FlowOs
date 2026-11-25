@@ -1,7 +1,7 @@
 name: iPhone unsigned IPA
 on:
   push:
-    branches: [main]
+    branches: [main, bonsai-studio]
   workflow_dispatch:
 permissions:
   contents: read
@@ -18,9 +18,12 @@ jobs:
         run: |
           xcodebuild -version
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          bash Scripts/prepare-bonsai.sh
           xcodegen generate
       - name: Core tests
         run: swiftc FlowOS/Models.swift FlowOS/FlowSchema.swift FlowOS/CloudSchema.swift FlowOS/HTMLHarness.swift Tests/main.swift -o /tmp/flow-tests && /tmp/flow-tests
+      - name: Bonsai host math tests
+        run: swiftc FlowOS/Bonsai/BonsaiMath.swift Tests/Bonsai/main.swift -o /tmp/bonsai-tests && /tmp/bonsai-tests
       - name: Compile physical iPhone app
         run: |
           set -o pipefail
