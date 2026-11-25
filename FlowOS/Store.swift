@@ -108,11 +108,17 @@ import SwiftUI
             if mode == "app" || mode == "workflow" || mode == "theme" {
                 mark("Architect · planning requested artifact")
                 // One bounded planning pass; do not reuse untrusted output as instructions.
-                let outline = try await brain.ask("Summarize the user's requested \(mode) in one short sentence. Do not call tools. Request: \(String(request.prefix(360)))", model:model,onChunk:{ value in
-                    self.live = value; self.lastProgress = Date()
-                },onStage:{ self.mark($0) })
+                var brief = ""
+                do {
+                    let outline = try await brain.ask("Summarize the user's requested \(mode) in one short sentence. Do not call tools. Request: \(String(request.prefix(360)))", model:model,onChunk:{ value in
+                        self.live = value; self.lastProgress = Date()
+                    },onStage:{ self.mark($0) })
+                    brief = String(outline.prefix(160))
+                } catch {
+                    try Task.checkCancellation()
+                    mark("Planning unavailable · using original request")
+                }
                 try Task.checkCancellation()
-                let brief = String(outline.prefix(160))
                 live = ""
                 mark("Developer · generating validated definition")
                 if mode == "app" {

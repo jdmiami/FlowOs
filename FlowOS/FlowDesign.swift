@@ -123,6 +123,8 @@ struct FluidBlob: Shape {
     }
 }
 struct LiquidOrb: View {
+    @Environment(\.renderBudget) private var budget
+    @Environment(\.flowTheme) private var theme
     var busy = false
     var onOpen: () -> Void = {}
     @Environment(\.accessibilityReduceMotion) private var reduced
@@ -173,6 +175,7 @@ struct FlowDock: View {
     let items: [(String, String)]
     @Namespace private var namespace
     @Environment(\.accessibilityReduceMotion) private var reduced
+    @Environment(\.flowTheme) private var theme
     var body: some View {
         HStack(spacing: 0) {
             ForEach(items.indices, id: \.self) { index in
@@ -188,7 +191,7 @@ struct FlowDock: View {
                     .frame(maxWidth: .infinity).frame(minHeight: 54)
                     .background {
                         if selection == index {
-                            Capsule().fill(Palette.lavender.opacity(0.52)).matchedGeometryEffect(id: "selection", in: namespace)
+                            Capsule().fill(Color(flowHex:theme.primary).opacity(0.52)).matchedGeometryEffect(id: "selection", in: namespace)
                         }
                     }
                     .scaleEffect(selection == index && !reduced ? 1.06 : 1)

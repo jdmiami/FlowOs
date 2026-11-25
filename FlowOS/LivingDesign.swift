@@ -115,12 +115,25 @@ struct LivingPortal: View {
     @Environment(\.renderBudget) private var budget
     @Environment(\.flowTheme) private var theme
     @State private var expanded = false
+    @Environment(\.accessibilityReduceTransparency) private var solid
     @State private var drag = CGSize.zero
     @Namespace private var glass
     private var actions: [(Int,String,String,CGFloat,CGFloat)] {
         [(1,"Chat","bubble.left", -104,-76),(2,"Labs","square.stack.3d.up",104,-76),(3,"Connect","phone", -104,76),(4,"Flow","point.3.connected.trianglepath.dotted",104,76)]
     }
     private var animation: Animation { reduced ? .easeOut(duration: 0.15) : FlowMotion.hero }
+    private var symbol: String {
+        guard busy else { return "sparkle" }
+        if stage.localizedCaseInsensitiveContains("loading") { return "arrow.down.circle" }
+        if stage.localizedCaseInsensitiveContains("validating") { return "checkmark.shield" }
+        if stage.localizedCaseInsensitiveContains("repair") { return "wrench.and.screwdriver" }
+        if stage.localizedCaseInsensitiveContains("publishing") { return "shippingbox" }
+        return "waveform"
+    }
+    @ViewBuilder private func portalGlass<V: View>(_ content: V, id: Int) -> some View {
+        if #available(iOS 26.0, *), !solid { content.glassEffect(.regular.tint(Color(flowHex:theme.primary).opacity(0.25)).interactive(), in: RoundedRectangle(cornerRadius:28)).glassEffectID(id, in:glass) }
+        else { content.liquidSurface(radius:28,interactive:true,tint:Color(flowHex:theme.primary).opacity(0.25)) }
+    }
     private func toggle() {
         withAnimation(animation) { expanded.toggle() }
         FlowFeedback.shared.play(true)
@@ -135,8 +148,13 @@ struct LivingPortal: View {
                         LiquidOrb(busy: busy, onOpen: {}).allowsHitTesting(false)
                     }
                     if budget.rich {
-                        Image(systemName: busy ? "waveform" : "sparkle").font(.system(size: 32,weight:.light))
-                            .foregroundStyle(Palette.ink.opacity(0.8))
+                        Image(systemName:symbol).font(.system(size:32,weight:.light)).foregroundStyle(Palette.ink.opacity(0.8))
+                    } else if busy {
+                        Image(systemName:symbol).font(.system(size:25,weight:.semibold))
+                            .foregroundStyle(Palette.ink)
+                            .frame(width:42,height:42).background(.regularMaterial,in:Circle()).offset(y:66)
+                            .contentTransition(.symbolEffect(.replace))
+                            .animation(reduced ? nil : FlowMotion.snap,value:symbol)
                     }
                 }
                 .scaleEffect(expanded && !reduced ? 0.64 : 1)
@@ -160,10 +178,10 @@ struct LivingPortal: View {
                             FlowFeedback.shared.play()
                             navigate(a.0)
                         } label: {
-                            VStack(spacing: 5) {
+                            portalGlass(VStack(spacing:5) {
                                 Image(systemName:a.2).font(.title2)
                                 Text(a.1).font(.caption2.weight(.semibold))
-                            }.frame(width:75,height:75).liquidSurface(radius:28,interactive:true,tint:Color(flowHex:theme.primary).opacity(0.25))
+                            }.frame(width:75,height:75),id:a.0)
                         }.buttonStyle(FlowPress())
                             .offset(x:a.3,y:a.4)
                             .transition(reduced ? .opacity : .scale(scale:0.15).combined(with:.opacity))
