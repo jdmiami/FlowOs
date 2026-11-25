@@ -10,12 +10,22 @@ import SwiftUI
     @Published var busy = false
     @Published var status = "Import a local model to activate AI."
     @Published var pending: Plan?
+    @Published var artifacts: [Artifact] = [] { didSet { save(artifacts, "artifacts") } }
+    @Published var live = ""
+    @Published var stage = "Idle"
+    @Published var activity: [String] = []
+    @Published var activeMode = "chat"
+    private var job: Task<Void, Never>?
+    private var watchdog: Task<Void, Never>?
+    private var lastProgress = Date()
+    private var timedOut = false
     private let brain = LocalBrain()
     private let folder = URL.applicationSupportDirectory.appending(path: "FlowOS", directoryHint: .isDirectory)
     init() {
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         apps = load("apps") ?? []; workflows = load("workflows") ?? []; chat = load("chat") ?? []
         notes = UserDefaults.standard.string(forKey: "notes") ?? ""
+        artifacts = load("artifacts") ?? []
         let file = folder.appending(path: "model.litertlm")
         if FileManager.default.fileExists(atPath: file.path) { model = file; status = "Model imported. Ready to load." }
     }
@@ -41,24 +51,94 @@ import SwiftUI
             model = dest; status = "Model imported. Ready to load."
         } catch { try? FileManager.default.removeItem(at: temp); status = error.localizedDescription }
     }
+    private func mark(_ message: String) {
+        stage = message; activity.append(message); lastProgress = Date()
+    }
+    func start(_ input: String, mode: String = "chat") {
+        guard !busy, job == nil, !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        job = Task { await send(input, mode: mode); job = nil }
+    }
+    func stop() {
+        guard busy else { return }
+        stage = "Stopping local inference…"
+        job?.cancel()
+        brain.stop()
+    }
     func send(_ input: String, mode: String = "chat") async {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !busy else { return }
         chat.append(ChatLine(user: true, text: text))
-        guard let model else { chat.append(ChatLine(user: false, text: "Import a compatible LiteRT-LM model in Settings first. No cloud fallback is used.")); return }
-        busy = true; defer { busy = false }
+        guard let model else {
+            stage = "Import a compatible model in Settings"
+            chat.append(ChatLine(user: false, text: stage)); return
+        }
+        busy = true; activeMode = mode; live = ""; activity = []; timedOut = false
+        mark("Preparing request")
+        watchdog = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(5))
+                guard !Task.isCancelled, let self, self.busy else { return }
+                if Date().timeIntervalSince(self.lastProgress) > 120 {
+                    self.timedOut = true
+                    self.stop()
+                    return
+                }
+            }
+        }
+        defer { watchdog?.cancel(); watchdog = nil; busy = false; live = "" }
+        let request = String(text.prefix(600))
         do {
-            let prompt: String
-            if mode == "app" { prompt = "Return only JSON with action app, title string, fields array of unique short strings. Design a simple record tracking app for: \(text)" }
-            else if mode == "workflow" { prompt = "Return only JSON with action workflow, title string, steps array of short human-readable steps. Design a workflow for: \(text)" }
-            else { prompt = "You are a private local assistant. Do not claim to execute actions. Answer this conversation concisely:\n" + chat.suffix(6).map { ($0.user ? "User: " : "Assistant: ") + String($0.text.prefix(800)) }.joined(separator: "\n") }
-            let result = try await brain.ask(prompt, model: model)
-            if mode == "chat" { chat.append(ChatLine(user: false, text: result)) }
-            else if let start = result.firstIndex(of: "{"), let end = result.lastIndex(of: "}"), start <= end, let plan = try? JSONDecoder().decode(Plan.self, from: Data(result[start...end].utf8)), (mode == "app" ? Validation.miniApp(plan) != nil : Validation.workflow(plan) != nil) {
-                pending = plan
-                chat.append(ChatLine(user: false, text: "Draft ready for review: \(plan.title ?? "Untitled")"))
-            } else { chat.append(ChatLine(user: false, text: "The model did not return a valid definition. Try a simpler request.")) }
-        } catch { chat.append(ChatLine(user: false, text: "Local inference failed: \(error.localizedDescription)")) }
+            var prompt: String
+            if mode == "app" {
+                prompt = "Create a record tracker app. Return ONLY compact JSON, example {\"action\":\"app\",\"title\":\"Expenses\",\"fields\":[\"Date\",\"Amount\",\"Category\"]}. Use 1-12 unique fields. Request: \(request)"
+            } else if mode == "workflow" {
+                prompt = "Return ONLY compact JSON, example {\"action\":\"workflow\",\"title\":\"Morning\",\"steps\":[\"Read calendar\",\"Review mail\"]}. Make a manual checklist for: \(request)"
+            } else {
+                let context = chat.dropLast().suffix(2).map { ($0.user ? "User: " : "Assistant: ") + String($0.text.prefix(200)) }.joined(separator: "\n")
+                prompt = "You are a local assistant. Do not claim to execute external actions. Answer concisely.\n\(context)\nUser: \(request)"
+            }
+            var result = try await brain.ask(prompt, model: model, onChunk: { value in
+                self.live = value; self.lastProgress = Date()
+            }, onStage: { self.mark($0) })
+            if mode == "chat" {
+                guard !result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw CocoaError(.fileReadCorruptFile) }
+                chat.append(ChatLine(user: false, text: result)); mark("Complete")
+            } else {
+                mark("Validating generated definition")
+                var plan = Validation.parse(result, mode: mode)
+                if plan == nil {
+                    mark("Repairing invalid output · attempt 2 of 2")
+                    live = ""
+                    let retry = prompt + "\nOutput valid JSON only. No Markdown, explanations or extra keys."
+                    result = try await brain.ask(retry, model: model, onChunk: { value in
+                        self.live = value; self.lastProgress = Date()
+                    }, onStage: { self.mark($0) })
+                    plan = Validation.parse(result, mode: mode)
+                }
+                try Task.checkCancellation()
+                let title = plan?.title ?? "Unvalidated draft"
+                artifacts.insert(Artifact(title: title, request: text, kind: mode, source: result, state: plan == nil ? "Needs repair" : "Ready to preview", plan: plan), at: 0)
+                mark(plan == nil ? "Draft saved · validation failed" : "Artifact ready · open workspace")
+                chat.append(ChatLine(user: false, text: "\(stage): \(title). Open Labs → Artifacts."))
+            }
+        } catch {
+            if mode != "chat", !live.isEmpty {
+                artifacts.insert(Artifact(title: "Interrupted draft", request: text, kind: mode, source: live, state: "Incomplete"), at: 0)
+            }
+            if timedOut { mark("No output for 120 seconds · stopped") }
+            else if Task.isCancelled { mark("Stopped by user") }
+            else { mark("Failed: \(error.localizedDescription)") }
+            chat.append(ChatLine(user: false, text: stage))
+        }
+    }
+    func install(_ id: UUID) {
+        guard let i = artifacts.firstIndex(where: { $0.id == id }), artifacts[i].installedID == nil, let plan = artifacts[i].plan else { return }
+        if let app = Validation.miniApp(plan) {
+            apps.append(app); artifacts[i].installedID = app.id
+        } else if let flow = Validation.workflow(plan) {
+            workflows.append(flow); artifacts[i].installedID = flow.id
+        } else { return }
+        artifacts[i].state = "Installed"
     }
     func approve() {
         guard let pending else { return }

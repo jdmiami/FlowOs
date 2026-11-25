@@ -65,7 +65,48 @@ struct RootView: View {
 struct ChatView: View {
     @EnvironmentObject var store: Store
     @State private var text = ""
-    var body: some View { VStack { ScrollView { VStack(alignment: .leading, spacing: 12) { Text("Intelligence").font(.largeTitle.bold()); if store.chat.isEmpty { Text("Your conversation stays on your phone.").glass() }; ForEach(store.chat) { line in Text(line.text).glass().padding(line.user ? .leading : .trailing, 22) }; if store.busy { ProgressView("Thinking locally…") } }.padding(20) }; HStack { TextField("Ask anything", text: $text, axis: .vertical).lineLimit(1...4); Button { let value = text; text = ""; Task { await store.send(value) } } label: { Image(systemName: "arrow.up.circle.fill").font(.largeTitle) }.disabled(store.busy || text.isEmpty) }.glass().padding(16) } }
+    @State private var mode = "chat"
+    @State private var follow = true
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text("Intelligence").font(.title2.bold())
+                Spacer()
+                Toggle("Follow", isOn: $follow).toggleStyle(.switch).labelsHidden()
+                    .accessibilityLabel("Follow streaming output")
+            }.padding(.horizontal, 20)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 12) {
+                        if store.chat.isEmpty { Text("Your conversation stays on your phone.").glass() }
+                        ForEach(store.chat) { line in
+                            Text(line.text).textSelection(.enabled).glass()
+                                .padding(line.user ? .leading : .trailing, 22)
+                        }
+                        AgentProgressView()
+                        if !store.artifacts.isEmpty { ArtifactLibrary() }
+                        Color.clear.frame(height: 1).id("bottom")
+                    }.padding(16)
+                }
+                .defaultScrollAnchor(.bottom)
+                .onChange(of: store.live) { _, _ in if follow { proxy.scrollTo("bottom", anchor: .bottom) } }
+                .onChange(of: store.chat.count) { _, _ in if follow { proxy.scrollTo("bottom", anchor: .bottom) } }
+            }
+            VStack(spacing: 8) {
+                Picker("Agent mode", selection: $mode) {
+                    Text("Chat").tag("chat"); Text("Build app").tag("app"); Text("Workflow").tag("workflow")
+                }.pickerStyle(.segmented).disabled(store.busy)
+                HStack {
+                    TextField(mode == "chat" ? "Ask anything" : "Describe what to build", text: $text, axis: .vertical).lineLimit(1...4)
+                    if store.busy {
+                        Button { store.stop() } label: { Image(systemName: "stop.circle.fill").font(.largeTitle) }.accessibilityLabel("Stop generation")
+                    } else {
+                        Button { let value = text; text = ""; store.start(value, mode: mode) } label: { Image(systemName: "arrow.up.circle.fill").font(.largeTitle) }.disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+            }.glass().padding(.horizontal, 16).padding(.bottom, 8)
+        }
+    }
 }
 struct LabsView: View {
     @EnvironmentObject var store: Store
@@ -73,7 +114,7 @@ struct LabsView: View {
     @State private var title = ""
     @State private var fields = "Name, Notes"
     @State private var selected: UUID?
-    var body: some View { ScrollView { VStack(alignment: .leading, spacing: 18) { Text("AI Labs").font(.largeTitle.bold()); Text("Make what you need.").font(.title3); VStack(alignment: .leading) { TextField("Describe a tracker or database app", text: $prompt, axis: .vertical).lineLimit(2...5); Button("Create with local AI") { Task { await store.send(prompt, mode: "app") } }.buttonStyle(.borderedProminent).disabled(store.busy || prompt.isEmpty) }.glass(); DisclosureGroup("Create manually") { TextField("App name", text: $title); TextField("Fields separated by commas", text: $fields); Button("Create app") { let plan = Plan(action: "app", title: title, fields: fields.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }); if let app = Validation.miniApp(plan) { store.apps.append(app); title = "" } }.disabled(title.isEmpty) }.glass(); Text("My applications").font(.title2.bold()); ForEach(store.apps) { app in Button { selected = app.id } label: { HStack { Image(systemName: "square.stack"); Text(app.title); Spacer(); Text("\(app.rows.count)"); Image(systemName: "chevron.right") }.glass() }.buttonStyle(.plain) } }.padding(20) }.sheet(isPresented: Binding(get: { selected != nil }, set: { if !$0 { selected = nil } })) { if let selected, let index = store.apps.firstIndex(where: { $0.id == selected }) { MiniAppView(app: $store.apps[index]) } } }
+    var body: some View { ScrollView { VStack(alignment: .leading, spacing: 18) { Text("AI Labs").font(.largeTitle.bold()); Text("Make what you need.").font(.title3); VStack(alignment: .leading) { TextField("Describe a tracker or database app", text: $prompt, axis: .vertical).lineLimit(2...5); Button("Create with local AI") { store.start(prompt, mode: "app") }.buttonStyle(.borderedProminent).disabled(store.busy || prompt.isEmpty) }.glass(); DisclosureGroup("Create manually") { TextField("App name", text: $title); TextField("Fields separated by commas", text: $fields); Button("Create app") { let plan = Plan(action: "app", title: title, fields: fields.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }); if let app = Validation.miniApp(plan) { store.apps.append(app); title = "" } }.disabled(title.isEmpty) }.glass(); AgentProgressView(); ArtifactLibrary(); Text("My applications").font(.title2.bold()); ForEach(store.apps) { app in Button { selected = app.id } label: { HStack { Image(systemName: "square.stack"); Text(app.title); Spacer(); Text("\(app.rows.count)"); Image(systemName: "chevron.right") }.glass() }.buttonStyle(.plain) } }.padding(20) }.sheet(isPresented: Binding(get: { selected != nil }, set: { if !$0 { selected = nil } })) { if let selected, let index = store.apps.firstIndex(where: { $0.id == selected }) { MiniAppView(app: $store.apps[index]) } } }
 }
 struct MiniAppView: View {
     @Binding var app: MiniApp
@@ -86,7 +127,7 @@ struct WorkflowsView: View {
     @State private var checked: Set<String> = []
     @State private var shortcut = ""
     @Environment(\.openURL) private var openURL
-    var body: some View { ScrollView { VStack(alignment: .leading, spacing: 18) { Text("Automation Studio").font(.largeTitle.bold()); VStack(alignment: .leading) { TextField("Describe a routine", text: $prompt, axis: .vertical).lineLimit(2...5); Button("Generate workflow") { Task { await store.send(prompt, mode: "workflow") } }.buttonStyle(.borderedProminent).disabled(store.busy || prompt.isEmpty) }.glass(); ForEach(store.workflows) { flow in VStack(alignment: .leading, spacing: 10) { Text(flow.title).font(.headline); Text("Manual checklist · not background automation").font(.caption); ForEach(Array(flow.steps.enumerated()), id: \.offset) { i, step in let key = "\(flow.id)-\(i)"; Button { if checked.contains(key) { checked.remove(key) } else { checked.insert(key) } } label: { HStack { Image(systemName: checked.contains(key) ? "checkmark.circle.fill" : "circle"); Text(step) } }.buttonStyle(.plain) } }.glass() }; VStack(alignment: .leading) { Text("Apple Shortcuts").font(.headline); TextField("Existing shortcut name", text: $shortcut); Button("Run installed shortcut") { var parts = URLComponents(); parts.scheme = "shortcuts"; parts.host = "run-shortcut"; parts.queryItems = [URLQueryItem(name: "name", value: shortcut)]; if let url = parts.url { openURL(url) } }.disabled(shortcut.isEmpty); Button("Open Shortcuts") { if let url = URL(string: "shortcuts://") { openURL(url) } } }.glass() }.padding(20) } }
+    var body: some View { ScrollView { VStack(alignment: .leading, spacing: 18) { Text("Automation Studio").font(.largeTitle.bold()); VStack(alignment: .leading) { TextField("Describe a routine", text: $prompt, axis: .vertical).lineLimit(2...5); Button("Generate workflow") { store.start(prompt, mode: "workflow") }.buttonStyle(.borderedProminent).disabled(store.busy || prompt.isEmpty) }.glass(); AgentProgressView(); ArtifactLibrary(kind: "workflow"); ForEach(store.workflows) { flow in VStack(alignment: .leading, spacing: 10) { Text(flow.title).font(.headline); Text("Manual checklist · not background automation").font(.caption); ForEach(Array(flow.steps.enumerated()), id: \.offset) { i, step in let key = "\(flow.id)-\(i)"; Button { if checked.contains(key) { checked.remove(key) } else { checked.insert(key) } } label: { HStack { Image(systemName: checked.contains(key) ? "checkmark.circle.fill" : "circle"); Text(step) } }.buttonStyle(.plain) } }.glass() }; VStack(alignment: .leading) { Text("Apple Shortcuts").font(.headline); TextField("Existing shortcut name", text: $shortcut); Button("Run installed shortcut") { var parts = URLComponents(); parts.scheme = "shortcuts"; parts.host = "run-shortcut"; parts.queryItems = [URLQueryItem(name: "name", value: shortcut)]; if let url = parts.url { openURL(url) } }.disabled(shortcut.isEmpty); Button("Open Shortcuts") { if let url = URL(string: "shortcuts://") { openURL(url) } } }.glass() }.padding(20) } }
 }
 struct ConnectView: View {
     @Environment(\.openURL) private var openURL

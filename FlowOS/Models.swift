@@ -33,3 +33,44 @@ enum Validation {
         return Workflow(title: title, steps: steps)
     }
 }
+
+struct Artifact: Codable, Identifiable {
+    var id = UUID()
+    var created = Date()
+    var title: String
+    var request: String
+    var kind: String
+    var source: String
+    var state: String
+    var plan: Plan?
+    var installedID: UUID?
+}
+extension Validation {
+    static func parse(_ text: String, mode: String) -> Plan? {
+        // Scan balanced JSON objects, ignoring braces inside quoted strings.
+        var start: String.Index?
+        var depth = 0
+        var quoted = false
+        var escaped = false
+        for i in text.indices {
+            let c = text[i]
+            if depth == 0 {
+                if c == "{" { start = i; depth = 1; quoted = false; escaped = false }
+                continue
+            }
+            if quoted {
+                if escaped { escaped = false }
+                else if c == "\\" { escaped = true }
+                else if c == "\"" { quoted = false }
+            } else if c == "\"" { quoted = true }
+            else if c == "{" { depth += 1 }
+            else if c == "}" {
+                depth -= 1
+                if depth == 0, let start,
+                   let plan = try? JSONDecoder().decode(Plan.self, from: Data(text[start...i].utf8)),
+                   (mode == "app" ? miniApp(plan) != nil : workflow(plan) != nil) { return plan }
+            }
+        }
+        return nil
+    }
+}

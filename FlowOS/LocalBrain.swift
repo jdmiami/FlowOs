@@ -5,6 +5,8 @@ import LiteRTLM
     private var engine: Engine?
     private var path: String?
     private var cache: URL?
+    private var active: Conversation?
+    func stop() { try? active?.cancel() }
 
     func unload() {
         engine = nil
@@ -38,14 +40,29 @@ import LiteRTLM
         }
     }
 
-    func ask(_ prompt: String, model: URL) async throws -> String {
+    func ask(_ prompt: String, model: URL, onChunk: (String) -> Void, onStage: (String) -> Void) async throws -> String {
         if path != model.path || engine == nil {
+            onStage("Loading local GPU model")
             unload()
             try await initialize(model: model)
         }
+        try Task.checkCancellation()
         guard let engine else { throw CocoaError(.fileReadUnknown) }
         let conversation = try await engine.createConversation()
-        let result = try await conversation.sendMessage(Message(prompt))
-        return result.toString
+        try Task.checkCancellation()
+        active = conversation
+        defer { active = nil }
+        onStage("Generating on Metal")
+        var result = ""
+        for try await chunk in conversation.sendMessageStream(Message(prompt), maxOutputTokens: 600) {
+            try Task.checkCancellation()
+            let delta = chunk.toString
+            if !delta.isEmpty {
+                result += delta
+                onChunk(result)
+            }
+        }
+        try Task.checkCancellation()
+        return result
     }
 }
