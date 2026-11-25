@@ -16,61 +16,126 @@ enum Palette {
     static let mint = Color(red: 0.72, green: 0.89, blue: 0.87)
     static let ink = Color(red: 0.15, green: 0.16, blue: 0.23)
 }
-struct Glass: ViewModifier {
-    func body(content: Content) -> some View { content.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 24)).overlay(RoundedRectangle(cornerRadius: 24).stroke(.white.opacity(0.7), lineWidth: 1)) }
-}
-extension View { func glass() -> some View { modifier(Glass()) } }
-struct LiquidOrb: View {
-    @Environment(\.accessibilityReduceMotion) var reduced
-    @State private var turn = false
-    var body: some View {
-        ZStack {
-            Circle().fill(RadialGradient(colors: [.white, Palette.lavender, Palette.mint.opacity(0.6)], center: .topLeading, startRadius: 4, endRadius: 110)).frame(width: 150, height: 150).shadow(color: Palette.lavender.opacity(0.6), radius: 25, y: 12)
-            Ellipse().stroke(.white.opacity(0.8), lineWidth: 2).frame(width: 170, height: 86).rotationEffect(.degrees(turn ? 35 : -35))
-            Ellipse().fill(LinearGradient(colors: [.white.opacity(0.9), .clear], startPoint: .top, endPoint: .bottom)).frame(width: 92, height: 44).rotationEffect(.degrees(-35)).offset(x: -14, y: -38)
-        }.frame(height: 185).accessibilityHidden(true).onAppear { if !reduced { withAnimation(.easeInOut(duration: 4).repeatForever(autoreverses: true)) { turn = true } } }
-    }
-}
+extension View { func glass() -> some View { modifier(FlowCard()) } }
 struct RootView: View {
     @EnvironmentObject var store: Store
-    @State private var tab = 0
+    @Environment(\.accessibilityReduceMotion) private var reduced
+    @SceneStorage("flow.tab") private var tab = 0
     @State private var settings = false
+    @State private var chatMode = "chat"
+    @State private var chatDraft = ""
+    @State private var entered = false
     let tabs = [("Home", "sparkle"), ("Chat", "bubble.left"), ("Labs", "square.stack.3d.up"), ("Connect", "phone"), ("Flow", "point.3.connected.trianglepath.dotted")]
+    private func navigate(_ index: Int, mode: String? = nil) {
+        if let mode, !store.busy { chatMode = mode }
+        withAnimation(reduced ? .easeOut(duration: 0.14) : FlowMotion.elastic) { tab = index }
+    }
     var body: some View {
-        VStack(spacing: 0) {
-            HStack { Text("flow.").font(.system(size: 34, weight: .semibold, design: .serif)); Spacer(); Button { settings = true } label: { Image(systemName: "slider.horizontal.3").font(.title2).padding(10) }.accessibilityLabel("Settings") }.padding(.horizontal, 24)
+        VStack(spacing: 7) {
+            HStack(alignment: .center) {
+                Button { navigate(0) } label: {
+                    Text("flow.").font(.system(size: 39, weight: .semibold, design: .serif)).tracking(-2.4)
+                }.buttonStyle(FlowPress()).accessibilityLabel("FlowOS home")
+                Spacer()
+                FlowGlassGroup {
+                    HStack(spacing: 10) {
+                Button {
+                    if store.busy { navigate(1) } else { settings = true }
+                } label: {
+                    HStack(spacing: 6) {
+                        Circle().fill(store.busy ? Palette.lavender : store.model != nil ? Color.green.opacity(0.8) : Color.gray).frame(width: 7, height: 7)
+                        Text(store.busy ? "Working" : store.model != nil ? "On device" : "Add model").font(.caption.weight(.semibold))
+                    }.padding(.horizontal, 12).frame(minHeight: 40).liquidSurface(radius: 22, interactive: true)
+                }.buttonStyle(FlowPress())
+                Button { settings = true } label: {
+                    Image(systemName: "slider.horizontal.3").font(.system(size: 19, weight: .medium)).frame(width: 46, height: 46).liquidSurface(radius: 25, interactive: true)
+                }.buttonStyle(FlowPress()).accessibilityLabel("Settings")
+                    }
+                }
+            }.padding(.horizontal, 22).padding(.top, 4)
             Group {
                 switch tab {
                 case 0: home
-                case 1: ChatView()
+                case 1: ChatView(text: $chatDraft, mode: $chatMode)
                 case 2: LabsView()
                 case 3: ConnectView()
                 default: WorkflowsView()
                 }
-            }.frame(maxWidth: .infinity, maxHeight: .infinity)
-            HStack(spacing: 0) { ForEach(tabs.indices, id: \.self) { i in Button { withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) { tab = i } } label: { VStack(spacing: 5) { Image(systemName: tabs[i].1).font(.system(size: 20)); Text(tabs[i].0).font(.caption2) }.frame(maxWidth: .infinity).padding(.vertical, 10).background(tab == i ? Palette.lavender.opacity(0.45) : .clear, in: Capsule()) }.accessibilityAddTraits(tab == i ? .isSelected : []) } }.padding(6).background(.regularMaterial, in: Capsule()).padding(.horizontal, 16).padding(.bottom, 6)
-        }.foregroundStyle(Palette.ink).background { LinearGradient(colors: [Color.white, Palette.lavender.opacity(0.4), Palette.peach.opacity(0.3), Palette.mint.opacity(0.45)], startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea() }.preferredColorScheme(.light).sheet(isPresented: $settings) { SettingsView().environmentObject(store) }
-        .sheet(isPresented: Binding(get: { store.pending != nil }, set: { if !$0 { store.pending = nil } })) { if let plan = store.pending { VStack(alignment: .leading, spacing: 20) { Text("Review creation").font(.largeTitle); Text(plan.title ?? "Untitled").font(.title2); ForEach(plan.fields ?? plan.steps ?? [], id: \.self) { Text($0) }; Spacer(); Button("Save to library") { store.approve() }.buttonStyle(.borderedProminent); Button("Cancel") { store.pending = nil } }.padding(28).presentationDetents([.medium, .large]) } }
+            }.id(tab)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .transition(reduced ? .opacity : .asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.95, anchor: .bottom)).combined(with: .offset(y: 14)), removal: .opacity))
+            FlowDock(selection: $tab, items: tabs)
+        }
+        .foregroundStyle(Palette.ink).tint(Palette.ink)
+        .background { FlowBackdrop(tab: tab, busy: store.busy) }
+        .preferredColorScheme(.light)
+        .sheet(isPresented: $settings) { SettingsView().environmentObject(store).presentationDragIndicator(.visible).presentationCornerRadius(34) }
+        .onAppear {
+            withAnimation(reduced ? .easeOut(duration: 0.15) : FlowMotion.hero) { entered = true }
+        }
     }
     var home: some View {
-        ScrollView { VStack(alignment: .leading, spacing: 20) {
-            LiquidOrb().frame(maxWidth: .infinity)
-            Text("What would you\nlike to do today?").font(.system(size: 36, weight: .regular, design: .serif)).tracking(-1.5)
-            Button { tab = 1 } label: { HStack { Image(systemName: "sparkle"); Text("Ask, create, or automate…"); Spacer(); Image(systemName: "arrow.up.right") }.glass() }.buttonStyle(.plain)
-            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) { ForEach([2,3,4], id: \.self) { i in Button { tab = i } label: { VStack(alignment: .leading, spacing: 14) { Image(systemName: tabs[i].1).font(.title); Text(tabs[i].0).font(.headline); Text(i == 2 ? "Create your tools" : i == 3 ? "Calls and email" : "Build a routine").font(.caption) }.glass() }.buttonStyle(.plain) } }
-            Text(store.status).font(.caption).foregroundStyle(.secondary)
-        }.padding(24) }
+        ScrollView {
+            VStack(alignment: .leading, spacing: 19) {
+                VStack(spacing: 1) {
+                    LiquidOrb(busy: store.busy, onOpen: { navigate(1) }).frame(maxWidth: .infinity)
+                    Text(store.busy ? "INTELLIGENCE IN MOTION" : "YOUR PERSONAL INTELLIGENCE")
+                        .font(.caption2.weight(.semibold)).tracking(2.5).foregroundStyle(Palette.ink.opacity(0.62))
+                }.scaleEffect(entered || reduced ? 1 : 0.78).opacity(entered ? 1 : 0)
+                Text("What would you\nlike to do today?")
+                    .font(.system(size: 38, weight: .regular, design: .serif)).tracking(-1.7)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
+                Button { navigate(1, mode: "chat") } label: {
+                    HStack(spacing: 13) {
+                        Image(systemName: "sparkle").font(.title2)
+                        Text("Ask, create, or automate…").font(.subheadline.weight(.medium))
+                        Spacer()
+                        Image(systemName: "arrow.up.right").font(.system(size: 15, weight: .semibold))
+                    }.padding(19).liquidSurface(radius: 30, interactive: true, tint: Palette.lavender.opacity(0.25))
+                }.buttonStyle(FlowPress())
+                HStack {
+                    Text("Your space").font(.system(.title2, design: .serif))
+                    Spacer()
+                    Text("\(store.apps.count) apps · \(store.workflows.count) flows").font(.caption.monospacedDigit())
+                }
+                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                    homeTile("Create", "Build with AI", "plus.square.on.square", Palette.peach, 1, "app")
+                    homeTile("Labs", "Apps & artifacts", "square.stack.3d.up", Palette.lavender, 2, nil)
+                    homeTile("Connect", "Calls & email", "phone.bubble", Palette.mint, 3, nil)
+                    homeTile("Automate", "Design a flow", "point.3.connected.trianglepath.dotted", Palette.lavender, 4, nil)
+                }
+                if store.busy { AgentProgressView() }
+                Text("PRIVATE BY DESIGN · LOCAL MODEL").font(.caption2.weight(.medium)).tracking(1.2).foregroundStyle(.secondary)
+            }.padding(.horizontal, 22).padding(.bottom, 16)
+        }.scrollIndicators(.hidden)
+    }
+    private func homeTile(_ title: String, _ subtitle: String, _ icon: String, _ color: Color, _ target: Int, _ mode: String?) -> some View {
+        Button { navigate(target, mode: mode) } label: {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Image(systemName: icon).font(.system(size: 23, weight: .medium))
+                        .frame(width: 48, height: 48)
+                        .background(color.opacity(0.58), in: RoundedRectangle(cornerRadius: 18))
+                    Spacer()
+                    Image(systemName: "arrow.up.right").font(.caption.weight(.semibold))
+                }
+                Text(title).font(.headline)
+                Text(subtitle).font(.caption).foregroundStyle(.secondary)
+            }.glass()
+        }.buttonStyle(FlowPress())
     }
 }
 struct ChatView: View {
     @EnvironmentObject var store: Store
-    @State private var text = ""
-    @State private var mode = "chat"
+    @Binding var text: String
+    @Binding var mode: String
+    @FocusState private var composerFocused: Bool
     @State private var follow = true
     var body: some View {
         VStack(spacing: 8) {
             HStack {
-                Text("Intelligence").font(.title2.bold())
+                Text("Intelligence").font(.system(.title, design: .serif))
                 Spacer()
                 Toggle("Follow", isOn: $follow).toggleStyle(.switch).labelsHidden()
                     .accessibilityLabel("Follow streaming output")
@@ -80,8 +145,7 @@ struct ChatView: View {
                     LazyVStack(alignment: .leading, spacing: 12) {
                         if store.chat.isEmpty { Text("Your conversation stays on your phone.").glass() }
                         ForEach(store.chat) { line in
-                            Text(line.text).textSelection(.enabled).glass()
-                                .padding(line.user ? .leading : .trailing, 22)
+                            ChatBubble(line: line)
                         }
                         AgentProgressView()
                         if !store.artifacts.isEmpty { ArtifactLibrary() }
@@ -93,28 +157,43 @@ struct ChatView: View {
                 .onChange(of: store.chat.count) { _, _ in if follow { proxy.scrollTo("bottom", anchor: .bottom) } }
             }
             VStack(spacing: 8) {
-                Picker("Agent mode", selection: $mode) {
-                    Text("Chat").tag("chat"); Text("Build app").tag("app"); Text("Workflow").tag("workflow")
-                }.pickerStyle(.segmented).disabled(store.busy)
+                FlowModePicker(selection: $mode, options: [("chat", "Chat"), ("app", "Build app"), ("workflow", "Workflow")]).disabled(store.busy)
                 HStack {
-                    TextField(mode == "chat" ? "Ask anything" : "Describe what to build", text: $text, axis: .vertical).lineLimit(1...4)
+                    TextField(mode == "chat" ? "Ask anything" : "Describe what to build", text: $text, axis: .vertical).lineLimit(1...4).focused($composerFocused)
                     if store.busy {
                         Button { store.stop() } label: { Image(systemName: "stop.circle.fill").font(.largeTitle) }.accessibilityLabel("Stop generation")
                     } else {
-                        Button { let value = text; text = ""; store.start(value, mode: mode) } label: { Image(systemName: "arrow.up.circle.fill").font(.largeTitle) }.disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Button { let value = text; text = ""; composerFocused = false; store.start(value, mode: mode) } label: { Image(systemName: "arrow.up.circle.fill").font(.largeTitle) }.disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
             }.glass().padding(.horizontal, 16).padding(.bottom, 8)
         }
     }
 }
+struct ChatBubble: View {
+    let line: ChatLine
+    @Environment(\.accessibilityReduceTransparency) private var solid
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            if !line.user {
+                Label("Flow", systemImage: "sparkle").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            }
+            Text(line.text).font(.body).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(line.user ? Palette.lavender.opacity(0.37) : Color.white.opacity(solid ? 1 : 0.72), in: RoundedRectangle(cornerRadius: 25))
+        .overlay { RoundedRectangle(cornerRadius: 25).strokeBorder(.white.opacity(0.8)) }
+        .padding(line.user ? .leading : .trailing, 22)
+    }
+}
 struct LabsView: View {
     @EnvironmentObject var store: Store
-    @State private var prompt = ""
-    @State private var title = ""
-    @State private var fields = "Name, Notes"
+    @SceneStorage("flow.labs.prompt") private var prompt = ""
+    @SceneStorage("flow.labs.title") private var title = ""
+    @SceneStorage("flow.labs.fields") private var fields = "Name, Notes"
     @State private var selected: UUID?
-    var body: some View { ScrollView { VStack(alignment: .leading, spacing: 18) { Text("AI Labs").font(.largeTitle.bold()); Text("Make what you need.").font(.title3); VStack(alignment: .leading) { TextField("Describe a tracker or database app", text: $prompt, axis: .vertical).lineLimit(2...5); Button("Create with local AI") { store.start(prompt, mode: "app") }.buttonStyle(.borderedProminent).disabled(store.busy || prompt.isEmpty) }.glass(); DisclosureGroup("Create manually") { TextField("App name", text: $title); TextField("Fields separated by commas", text: $fields); Button("Create app") { let plan = Plan(action: "app", title: title, fields: fields.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }); if let app = Validation.miniApp(plan) { store.apps.append(app); title = "" } }.disabled(title.isEmpty) }.glass(); AgentProgressView(); ArtifactLibrary(); Text("My applications").font(.title2.bold()); ForEach(store.apps) { app in Button { selected = app.id } label: { HStack { Image(systemName: "square.stack"); Text(app.title); Spacer(); Text("\(app.rows.count)"); Image(systemName: "chevron.right") }.glass() }.buttonStyle(.plain) } }.padding(20) }.sheet(isPresented: Binding(get: { selected != nil }, set: { if !$0 { selected = nil } })) { if let selected, let index = store.apps.firstIndex(where: { $0.id == selected }) { MiniAppView(app: $store.apps[index]) } } }
+    var body: some View { ScrollView { VStack(alignment: .leading, spacing: 18) { FlowSectionTitle(title: "AI Labs", subtitle: "Build, preview and evolve your own applications."); VStack(alignment: .leading) { TextField("Describe a tracker or database app", text: $prompt, axis: .vertical).lineLimit(2...5); Button("Create with local AI") { store.start(prompt, mode: "app") }.buttonStyle(FlowPrimary()).disabled(store.busy || prompt.isEmpty) }.glass(); DisclosureGroup("Create manually") { TextField("App name", text: $title); TextField("Fields separated by commas", text: $fields); Button("Create app") { let plan = Plan(action: "app", title: title, fields: fields.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }); if let app = Validation.miniApp(plan) { store.apps.append(app); title = "" } }.disabled(title.isEmpty) }.glass(); AgentProgressView(); ArtifactLibrary(); Text("My applications").font(.title2.bold()); ForEach(store.apps) { app in Button { selected = app.id } label: { HStack { Image(systemName: "square.stack"); Text(app.title); Spacer(); Text("\(app.rows.count)"); Image(systemName: "chevron.right") }.glass() }.buttonStyle(FlowPress()) } }.padding(20) }.sheet(isPresented: Binding(get: { selected != nil }, set: { if !$0 { selected = nil } })) { if let selected, let index = store.apps.firstIndex(where: { $0.id == selected }) { MiniAppView(app: $store.apps[index]) } } }
 }
 struct MiniAppView: View {
     @Binding var app: MiniApp
@@ -123,11 +202,11 @@ struct MiniAppView: View {
 }
 struct WorkflowsView: View {
     @EnvironmentObject var store: Store
-    @State private var prompt = ""
+    @SceneStorage("flow.workflow.prompt") private var prompt = ""
     @State private var checked: Set<String> = []
     @State private var shortcut = ""
     @Environment(\.openURL) private var openURL
-    var body: some View { ScrollView { VStack(alignment: .leading, spacing: 18) { Text("Automation Studio").font(.largeTitle.bold()); VStack(alignment: .leading) { TextField("Describe a routine", text: $prompt, axis: .vertical).lineLimit(2...5); Button("Generate workflow") { store.start(prompt, mode: "workflow") }.buttonStyle(.borderedProminent).disabled(store.busy || prompt.isEmpty) }.glass(); AgentProgressView(); ArtifactLibrary(kind: "workflow"); ForEach(store.workflows) { flow in VStack(alignment: .leading, spacing: 10) { Text(flow.title).font(.headline); Text("Manual checklist · not background automation").font(.caption); ForEach(Array(flow.steps.enumerated()), id: \.offset) { i, step in let key = "\(flow.id)-\(i)"; Button { if checked.contains(key) { checked.remove(key) } else { checked.insert(key) } } label: { HStack { Image(systemName: checked.contains(key) ? "checkmark.circle.fill" : "circle"); Text(step) } }.buttonStyle(.plain) } }.glass() }; VStack(alignment: .leading) { Text("Apple Shortcuts").font(.headline); TextField("Existing shortcut name", text: $shortcut); Button("Run installed shortcut") { var parts = URLComponents(); parts.scheme = "shortcuts"; parts.host = "run-shortcut"; parts.queryItems = [URLQueryItem(name: "name", value: shortcut)]; if let url = parts.url { openURL(url) } }.disabled(shortcut.isEmpty); Button("Open Shortcuts") { if let url = URL(string: "shortcuts://") { openURL(url) } } }.glass() }.padding(20) } }
+    var body: some View { ScrollView { VStack(alignment: .leading, spacing: 18) { FlowSectionTitle(title: "Automation Studio", subtitle: "Turn intention into repeatable workflows."); VStack(alignment: .leading) { TextField("Describe a routine", text: $prompt, axis: .vertical).lineLimit(2...5); Button("Generate workflow") { store.start(prompt, mode: "workflow") }.buttonStyle(FlowPrimary()).disabled(store.busy || prompt.isEmpty) }.glass(); AgentProgressView(); ArtifactLibrary(kind: "workflow"); ForEach(store.workflows) { flow in VStack(alignment: .leading, spacing: 10) { Text(flow.title).font(.headline); Text("Manual checklist · not background automation").font(.caption); ForEach(Array(flow.steps.enumerated()), id: \.offset) { i, step in let key = "\(flow.id)-\(i)"; Button { if checked.contains(key) { checked.remove(key) } else { checked.insert(key) } } label: { HStack { Image(systemName: checked.contains(key) ? "checkmark.circle.fill" : "circle"); Text(step) } }.buttonStyle(FlowPress()) } }.glass() }; VStack(alignment: .leading) { Text("Apple Shortcuts").font(.headline); TextField("Existing shortcut name", text: $shortcut); Button("Run installed shortcut") { var parts = URLComponents(); parts.scheme = "shortcuts"; parts.host = "run-shortcut"; parts.queryItems = [URLQueryItem(name: "name", value: shortcut)]; if let url = parts.url { openURL(url) } }.buttonStyle(FlowPrimary()).disabled(shortcut.isEmpty); Button("Open Shortcuts") { if let url = URL(string: "shortcuts://") { openURL(url) } } }.glass() }.padding(20) } }
 }
 struct ConnectView: View {
     @Environment(\.openURL) private var openURL
@@ -143,7 +222,7 @@ struct ConnectView: View {
     @State private var showMail = false
     @State private var browser = "https://www.google.com"
     @State private var page: URL?
-    var body: some View { ScrollView { VStack(alignment: .leading, spacing: 16) { Text("Connect").font(.largeTitle.bold()); VStack(alignment: .leading, spacing: 12) { Label("Phone", systemImage: "phone").font(.headline); TextField("Telephone number", text: $phone).keyboardType(.phonePad); Button("Prepare call") { confirmCall = true }.disabled(phone.isEmpty) }.glass(); VStack(alignment: .leading, spacing: 12) { Label("Mail composer", systemImage: "envelope").font(.headline); TextField("Recipient", text: $email).keyboardType(.emailAddress).textInputAutocapitalization(.never); TextField("Subject", text: $subject); TextField("Message", text: $bodyText, axis: .vertical); Button("Review in Mail") { if MFMailComposeViewController.canSendMail() { showMail = true } else { status = "Set up an Apple Mail account first." } }.disabled(email.isEmpty) }.glass(); VStack(alignment: .leading, spacing: 12) { Label("Calendar", systemImage: "calendar").font(.headline); TextField("Event title", text: $event); DatePicker("Start", selection: $date); Button("Save 1-hour event") { Task { await saveEvent() } }.disabled(event.isEmpty) }.glass(); VStack(alignment: .leading) { Label("Notes", systemImage: "note.text").font(.headline); TextEditor(text: $store.notes).frame(minHeight: 100).scrollContentBackground(.hidden) }.glass(); VStack(alignment: .leading) { Label("Browser", systemImage: "globe").font(.headline); TextField("HTTPS URL", text: $browser).keyboardType(.URL).textInputAutocapitalization(.never); Button("Open page") { if let url = URL(string: browser), url.scheme == "https", url.host != nil { page = url } else { status = "Enter a valid HTTPS URL." } } }.glass(); Text(status).font(.caption) }.padding(20) }.alert("Place this call?", isPresented: $confirmCall) { Button("Call") { let number = phone.filter { "0123456789+".contains($0) }; if !number.isEmpty, let url = URL(string: "tel:\(number)") { openURL(url) } }; Button("Cancel", role: .cancel) {} } message: { Text(phone) }.sheet(isPresented: $showMail) { MailComposer(recipient: email, subject: subject, messageBody: bodyText) }.sheet(isPresented: Binding(get: { page != nil }, set: { if !$0 { page = nil } })) { if let page { WebPage(url: page) } } }
+    var body: some View { ScrollView { VStack(alignment: .leading, spacing: 16) { FlowSectionTitle(title: "Connect", subtitle: "Your communications and personal tools."); VStack(alignment: .leading, spacing: 12) { Label("Phone", systemImage: "phone").font(.headline); TextField("Telephone number", text: $phone).keyboardType(.phonePad); Button("Prepare call") { confirmCall = true }.buttonStyle(FlowPrimary()).disabled(phone.isEmpty) }.glass(); VStack(alignment: .leading, spacing: 12) { Label("Mail composer", systemImage: "envelope").font(.headline); TextField("Recipient", text: $email).keyboardType(.emailAddress).textInputAutocapitalization(.never); TextField("Subject", text: $subject); TextField("Message", text: $bodyText, axis: .vertical); Button("Review in Mail") { if MFMailComposeViewController.canSendMail() { showMail = true } else { status = "Set up an Apple Mail account first." } }.buttonStyle(FlowPrimary()).disabled(email.isEmpty) }.glass(); VStack(alignment: .leading, spacing: 12) { Label("Calendar", systemImage: "calendar").font(.headline); TextField("Event title", text: $event); DatePicker("Start", selection: $date); Button("Save 1-hour event") { Task { await saveEvent() } }.buttonStyle(FlowPrimary()).disabled(event.isEmpty) }.glass(); VStack(alignment: .leading) { Label("Notes", systemImage: "note.text").font(.headline); TextEditor(text: $store.notes).frame(minHeight: 100).scrollContentBackground(.hidden) }.glass(); VStack(alignment: .leading) { Label("Browser", systemImage: "globe").font(.headline); TextField("HTTPS URL", text: $browser).keyboardType(.URL).textInputAutocapitalization(.never); Button("Open page") { if let url = URL(string: browser), url.scheme == "https", url.host != nil { page = url } else { status = "Enter a valid HTTPS URL." } } }.glass(); Text(status).font(.caption) }.padding(20) }.alert("Place this call?", isPresented: $confirmCall) { Button("Call") { let number = phone.filter { "0123456789+".contains($0) }; if !number.isEmpty, let url = URL(string: "tel:\(number)") { openURL(url) } }; Button("Cancel", role: .cancel) {} } message: { Text(phone) }.sheet(isPresented: $showMail) { MailComposer(recipient: email, subject: subject, messageBody: bodyText) }.sheet(isPresented: Binding(get: { page != nil }, set: { if !$0 { page = nil } })) { if let page { WebPage(url: page) } } }
     @MainActor private func saveEvent() async { let db = EKEventStore(); do { guard try await db.requestFullAccessToEvents() else { status = "Calendar permission denied."; return }; guard let calendar = db.defaultCalendarForNewEvents else { status = "No writable default calendar."; return }; let item = EKEvent(eventStore: db); item.title = event; item.startDate = date; item.endDate = date.addingTimeInterval(3600); item.calendar = calendar; try db.save(item, span: .thisEvent); status = "Event saved."; event = "" } catch { status = error.localizedDescription } }
 }
 struct MailComposer: UIViewControllerRepresentable {
