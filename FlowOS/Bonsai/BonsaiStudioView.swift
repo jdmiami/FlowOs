@@ -13,7 +13,7 @@ struct BonsaiStudioView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment:.leading,spacing:16){
-                    FlowSectionTitle(title:"Image Studio",subtitle:"Bonsai Image 4B · Offline creation")
+                    FlowSectionTitle(title:"ImageMaker",subtitle:"Bonsai Image 4B · Offline creation")
                     VStack(alignment:.leading,spacing:10){
                         HStack {
                             Image(systemName:"cpu").font(.title2)
@@ -22,7 +22,7 @@ struct BonsaiStudioView: View {
                             Text(studio.ready ? "Ready":"Download").font(.caption.weight(.semibold))
                         }
                         Picker("Resolution",selection:$studio.size){Text("256 × 256 · Fast").tag(256);Text("512 × 512").tag(512)}.pickerStyle(.segmented).disabled(studio.generating || studio.downloading)
-                        Text("Lower resolution reduces compute, not the model weight memory.").font(.caption)
+                        Text("Downloads continue on Wi-Fi when you lock your phone or switch apps. Reopen to verify the files. Do not force-quit FlowOS.").font(.caption)
                         ForEach(studio.required){file in
                             HStack {
                                 Image(systemName:studio.readyFiles.contains(file.name) ? "checkmark.circle.fill":"arrow.down.circle")
@@ -34,9 +34,9 @@ struct BonsaiStudioView: View {
                         if studio.downloading {
                             ProgressView(value:studio.progress)
                             Text("\(Int(studio.progress*100))% · \(studio.detail)").font(.caption.monospacedDigit())
-                            Button("Cancel download"){studio.cancel()}
+                            Button("Pause download"){studio.cancel()}
                         } else {
-                            if !studio.ready {Button("Download selected model"){studio.download()}.buttonStyle(FlowPrimary()).disabled(studio.manifest==nil || store.busy)}
+                            if !studio.ready {Button("Download / resume model"){studio.download()}.buttonStyle(FlowPrimary()).disabled(studio.manifest==nil || store.busy)}
                             if studio.stored>0{Button("Remove model files",role:.destructive){confirmRemove=true}.font(.caption).disabled(studio.generating || store.busy)}
                         }
                         Link("Source and license",destination:URL(string:"https://huggingface.co/litert-community/Bonsai-Image-ternary-4B")!).font(.caption)
@@ -80,15 +80,15 @@ struct BonsaiStudioView: View {
                 }.padding(20)
             }.background{FlowBackdrop(tab:2,busy:store.busy)}
             .navigationTitle("Media").navigationBarTitleDisplayMode(.inline)
-            .toolbar{ToolbarItem(placement:.confirmationAction){Button("Done"){dismiss()}.disabled(studio.generating || studio.downloading)}}
-            .interactiveDismissDisabled(studio.generating || studio.downloading)
+            .toolbar{ToolbarItem(placement:.confirmationAction){Button("Done"){dismiss()}.disabled(studio.generating)}}
+            .interactiveDismissDisabled(studio.generating)
             .confirmationDialog("Remove all Bonsai weights? Generated images will be retained.",isPresented:$confirmRemove){Button("Remove models",role:.destructive){studio.removeModels()}}
             .sheet(isPresented:Binding(get:{selectedImage != nil},set:{if !$0{selectedImage=nil}})){
                 if let url=selectedImage,let image=UIImage(contentsOfFile:url.path){
                     VStack(spacing:16){Image(uiImage:image).resizable().scaledToFit();ShareLink(item:url);Button("Done"){selectedImage=nil}}.padding()
                 }
             }
-            .onChange(of:scene){_,value in if value == .background && studio.generating {studio.cancel()}}
+            .onChange(of:scene){_,value in if value == .background && studio.generating {studio.cancel()}; if value == .active {studio.syncDownloads()}}
             .onReceive(NotificationCenter.default.publisher(for:UIApplication.didReceiveMemoryWarningNotification)){_ in if studio.generating{studio.cancel()}}
         }
     }

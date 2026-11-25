@@ -6,6 +6,7 @@ import UIKit
 import WebKit
 
 @main struct FlowOSApp: App {
+    @UIApplicationDelegateAdaptor(FlowDownloadDelegate.self) private var downloadDelegate
     @StateObject private var store = Store()
     var body: some Scene { WindowGroup { LivingRoot().environmentObject(store) } }
 }
@@ -128,7 +129,7 @@ struct RootView: View {
                     homeTile("Connect", "Calls & email", "phone.bubble", Palette.mint, 3, nil)
                     homeTile("Automate", "Design a flow", "point.3.connected.trianglepath.dotted", Palette.lavender, 4, nil)
                 }
-                Button { media = true } label: { Label("Image Studio · Bonsai",systemImage:"photo.on.rectangle.angled").frame(maxWidth:.infinity) }.buttonStyle(FlowPrimary())
+                Button { media = true } label: { Label("ImageMaker · Bonsai",systemImage:"photo.on.rectangle.angled").frame(maxWidth:.infinity) }.buttonStyle(FlowPrimary())
                 Button { spatial = true } label: { Label("Open spatial workspace",systemImage:"square.on.square").frame(maxWidth:.infinity) }.buttonStyle(FlowPrimary())
                 Text(budget.label).font(.caption.monospaced()).foregroundStyle(.secondary)
                 if store.busy { AgentProgressView() }

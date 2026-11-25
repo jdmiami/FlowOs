@@ -2,6 +2,7 @@ import Foundation
 import CryptoKit
 import SwiftUI
 import os
+import UIKit
 
 struct BonsaiAsset: Codable, Identifiable {
     let name:String
@@ -51,7 +52,11 @@ final class BonsaiStop: @unchecked Sendable {
     @Published private(set) var output:URL?
     @Published private(set) var lastSeconds:Double?
     private let folder=URL.applicationSupportDirectory.appendingPathComponent("FlowOS/BonsaiModels",isDirectory:true)
-    private var transfer:URLSessionDownloadTask?
+    private var verification=false
+    private var observer:NSObjectProtocol?
+    private var timer:Timer?
+    private var starting=false
+    private var polling=false
     private var stopFlag:BonsaiStop?
     private var job:Task<Void,Never>?
     init(){
@@ -62,6 +67,12 @@ final class BonsaiStop: @unchecked Sendable {
             refresh()
         }catch{status=error.localizedDescription}
         scanGallery()
+        observer=NotificationCenter.default.addObserver(forName:BonsaiBackground.changed,object:nil,queue:.main){[weak self] note in
+            let error=note.userInfo?["error"] as? String
+            Task{@MainActor in if let error,self?.generating == false{ self?.status=error }; self?.syncDownloads()}
+        }
+        timer=Timer.scheduledTimer(withTimeInterval:1,repeats:true){[weak self] _ in Task{@MainActor in self?.syncDownloads()}}
+        syncDownloads()
     }
     var required:[BonsaiAsset]{
         let names=BonsaiManifest.names(size:size)
@@ -82,44 +93,72 @@ final class BonsaiStop: @unchecked Sendable {
         gallery=((try? FileManager.default.contentsOfDirectory(at:dir,includingPropertiesForKeys:nil)) ?? []).filter{$0.pathExtension=="png"}.sorted{$0.lastPathComponent>$1.lastPathComponent}
     }
     func cancel(){
-        stopFlag?.cancel();transfer?.cancel()
+        stopFlag?.cancel();if downloading{BonsaiBackground.shared.pause()}
         status="Stopping after current operation…"
     }
     func removeModels(){
         guard !downloading,!generating else{return}
-        for asset in manifest?.files ?? [] {try? FileManager.default.removeItem(at:path(asset))}
+        for asset in manifest?.files ?? [] {try? FileManager.default.removeItem(at:path(asset));try? FileManager.default.removeItem(at:BonsaiBackground.shared.staged(asset.name));try? FileManager.default.removeItem(at:folder.appendingPathComponent(asset.name+".resume"))}
         refresh();status="Model files removed. Your images were kept."
     }
     func download(){
-        guard !downloading,!generating,manifest != nil,!ready else{return}
-        let assets=required.filter{!readyFiles.contains($0.name)}
-        guard assets.count>0 else{return}
+        guard !downloading,!generating,!starting,!ready else{return}
+        let assets=required.filter{!readyFiles.contains($0.name) && !FileManager.default.fileExists(atPath:BonsaiBackground.shared.staged($0.name).path)}
         let bytes=assets.reduce(Int64(0)){$0+$1.bytes}
         let capacity=(try? folder.resourceValues(forKeys:[.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage) ?? 0
-        guard capacity>bytes+700_000_000 else{status="Free more storage before downloading.";return}
-        let flag=BonsaiStop();stopFlag=flag;downloading=true;progress=0;detail=""
-        job=Task{
-            var completed:Int64=0
-            defer{downloading=false;transfer=nil;stopFlag=nil;job=nil;refresh()}
-            do{
-                for asset in assets{
-                    if flag.isStopped{throw CancellationError()}
-                    status="Downloading "+asset.name
-                    let temp=folder.appendingPathComponent(UUID().uuidString+".partial")
-                    defer{try? FileManager.default.removeItem(at:temp)}
-                    let url=URL(string:"https://huggingface.co/"+BonsaiManifest.repository+"/resolve/"+BonsaiManifest.pinned+"/"+asset.name)!
-                    let baseline=completed
-                    try await fetch(url,to:temp,asset:asset,completed:baseline,total:bytes)
-                    status="Verifying SHA-256 · "+asset.name
+        guard assets.isEmpty || capacity>bytes+700_000_000 else{status="Free more storage before downloading.";return}
+        starting=true;downloading=true;status="Downloading in background · Wi-Fi";progress=0
+        BonsaiBackground.shared.start(assets)
+        starting=false;syncDownloads()
+    }
+    func syncDownloads(){
+        guard !generating,!polling,!starting,!verification,manifest != nil else{return}
+        polling=true
+        BonsaiBackground.shared.snapshot{[weak self] tasks in
+            guard let self else{return}
+            self.polling=false
+            guard !self.generating,!self.starting,!self.verification else{return}
+            self.refresh()
+            let active=tasks.filter{$0.state == .running || $0.state == .suspended}
+            let staged=self.required.filter{FileManager.default.fileExists(atPath:BonsaiBackground.shared.staged($0.name).path)}
+            let total=self.required.reduce(Int64(0)){$0+$1.bytes}
+            let completed=self.required.filter{self.readyFiles.contains($0.name)}.reduce(Int64(0)){$0+$1.bytes}
+            let pending=staged.reduce(Int64(0)){$0+$1.bytes}
+            let received=active.reduce(Int64(0)){sum,task in
+                guard let asset=self.required.first(where:{$0.name==task.taskDescription}),!self.readyFiles.contains(asset.name),!staged.contains(where:{$0.name==asset.name}) else{return sum}
+                return sum+min(asset.bytes,max(0,task.countOfBytesReceived))
+            }
+            self.progress=total>0 ? min(1,Double(completed+pending+received)/Double(total)):0
+            self.detail=ByteCountFormatter.string(fromByteCount:completed+pending+received,countStyle:.file)+" / "+ByteCountFormatter.string(fromByteCount:total,countStyle:.file)
+            self.downloading = !active.isEmpty || !staged.isEmpty
+            if !active.isEmpty{self.status="Downloading in background · Wi-Fi"}
+            if !staged.isEmpty,UIApplication.shared.applicationState == .active{
+                self.verifyStaged(staged)
+            }else if self.ready{self.status="Model ready for offline generation."}
+            else if !staged.isEmpty{self.status="Downloaded. Verification will finish when you reopen ImageMaker."}
+        }
+    }
+    private func verifyStaged(_ assets:[BonsaiAsset]){
+        verification=true;downloading=true
+        let flag=BonsaiStop();stopFlag=flag
+        Task{
+            defer{verification=false;stopFlag=nil;refresh();syncDownloads()}
+            for asset in assets{
+                let temp=BonsaiBackground.shared.staged(asset.name)
+                status="Verifying SHA-256 · "+asset.name
+                do{
                     try await Task.detached(priority:.utility){try Self.verifyFile(temp,asset:asset,flag:flag)}.value
-                    if flag.isStopped{throw CancellationError()}
+                    if flag.isStopped{break}
                     let dest=path(asset)
                     if FileManager.default.fileExists(atPath:dest.path){try FileManager.default.removeItem(at:dest)}
                     try FileManager.default.moveItem(at:temp,to:dest)
-                    completed+=asset.bytes;progress=Double(completed)/Double(bytes);refresh()
+                    refresh()
+                }catch{
+                    if flag.isStopped{break}
+                    try? FileManager.default.removeItem(at:temp)
+                    status=error.localizedDescription
                 }
-                status="Downloaded and verified. Ready for offline generation."
-            }catch{status=flag.isStopped ? "Stopped. Completed files are kept." : error.localizedDescription}
+            }
         }
     }
     nonisolated private static func verifyFile(_ url:URL,asset:BonsaiAsset,flag:BonsaiStop)throws{
@@ -136,30 +175,6 @@ final class BonsaiStop: @unchecked Sendable {
             sha.update(data:block)
         }
         guard sha.finalize().map({String(format:"%02x",$0)}).joined()==asset.sha256 else{throw BonsaiManifest.Failure("Checksum mismatch: "+asset.name)}
-    }
-    private func fetch(_ url:URL,to temp:URL,asset:BonsaiAsset,completed:Int64,total:Int64)async throws{
-        var observer:Task<Void,Never>?
-        defer{observer?.cancel();transfer=nil}
-        try await withCheckedThrowingContinuation{(c:CheckedContinuation<Void,Error>) in
-            let task=URLSession.shared.downloadTask(with:url){location,response,error in
-                do{
-                    if let error{throw error}
-                    guard let location,let http=response as? HTTPURLResponse,http.statusCode==200 else{throw BonsaiManifest.Failure("Model download failed. Check your connection.")}
-                    try FileManager.default.moveItem(at:location,to:temp)
-                    c.resume()
-                }catch{c.resume(throwing:error)}
-            }
-            transfer=task;task.resume()
-            observer=Task{[weak self] in
-                while !Task.isCancelled{
-                    try? await Task.sleep(for:.milliseconds(250))
-                    guard !Task.isCancelled,let self,self.transfer===task else{return}
-                    let count=max(0,task.countOfBytesReceived)
-                    self.progress=min(1,Double(completed+min(count,asset.bytes))/Double(total))
-                    self.detail=ByteCountFormatter.string(fromByteCount:count,countStyle:.file)+" / "+ByteCountFormatter.string(fromByteCount:asset.bytes,countStyle:.file)
-                }
-            }
-        }
     }
     func generate(store:Store){
         guard ready,!downloading,!generating,!prompt.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,let value=UInt64(seed),store.beginImageGeneration() else{return}
