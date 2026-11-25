@@ -5,7 +5,7 @@ options:
 packages:
   LiteRTLM:
     url: https://github.com/google-ai-edge/LiteRT-LM
-    from: 0.16.0
+    exactVersion: 0.20.0
 targets:
   FlowOS:
     type: application
@@ -18,8 +18,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.flowos.personal
         SWIFT_VERSION: '5.0'
-        MARKETING_VERSION: '0.2.0'
-        CURRENT_PROJECT_VERSION: '1'
+        MARKETING_VERSION: '0.2.1'
+        CURRENT_PROJECT_VERSION: '2'
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription: Create events you approve.
         INFOPLIST_KEY_NSContactsUsageDescription: Find contacts for calls you request.
