@@ -1,3 +1,21 @@
+# FlowOS 0.5.1 — Hybrid Inference
+
+## Cloud providers
+Open **Settings → Cloud providers & model routing**, or tap **Models** on Home.
+Paste your own provider API key into the secure field, save it, then refresh models.
+Credentials are stored in the iOS Keychain, never committed to source.
+Choose a model for Chat, Labs, Workflows, or Themes. Each route has an output cap,
+a bounded context size, and model-specific reasoning effort. On-device inference is
+the default. Cloud requests require confirmation and may incur charges.
+Chat includes recent bounded history when you approve a cloud request; other tasks
+send the requested artifact prompt. Cloud generation uses one pass; invalid output
+is saved for review rather than automatically incurring another API request.
+Usage totals include only reported API tokens and are not a billing statement.
+Only text inference is supported in this release, not remote tool execution, image,
+audio or video generation. API keys and model access must be verified on-device.
+The earlier staged local model download and device-control expansion is separate,
+not included in this release.
+
 # FlowOS 0.5 — Living Intelligence
 
 A native iPhone companion with offline GPU inference, pastel Liquid Glass and a generative artifact workspace.

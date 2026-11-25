@@ -39,12 +39,11 @@ struct RootView: View {
     @State private var settings = false
     @State private var spatial = false
     @Environment(\.renderBudget) private var budget
-    @State private var chatMode = "chat"
+    @State private var cloudSettings = false
     @State private var chatDraft = ""
     @State private var entered = false
     let tabs = [("Home", "sparkle"), ("Chat", "bubble.left"), ("Labs", "square.stack.3d.up"), ("Connect", "phone"), ("Flow", "point.3.connected.trianglepath.dotted")]
     private func navigate(_ index: Int, mode: String? = nil) {
-        if let mode, !store.busy { chatMode = mode }
         withAnimation(reduced ? .easeOut(duration: 0.14) : FlowMotion.hero) { tab = index }; FlowFeedback.shared.play()
     }
     var body: some View {
@@ -57,11 +56,11 @@ struct RootView: View {
                 FlowGlassGroup {
                     HStack(spacing: 10) {
                 Button {
-                    if store.busy { navigate(1) } else { settings = true }
+                    if store.busy { navigate(store.activeMode == "app" ? 2 : store.activeMode == "workflow" ? 4 : 1) } else { cloudSettings = true }
                 } label: {
                     HStack(spacing: 6) {
                         Circle().fill(store.busy ? Palette.lavender : store.model != nil ? Color.green.opacity(0.8) : Color.gray).frame(width: 7, height: 7)
-                        Text(store.busy ? "Working" : store.model != nil ? "On device" : "Add model").font(.caption.weight(.semibold))
+                        Text(store.busy ? "Working" : "Models").font(.caption.weight(.semibold))
                     }.padding(.horizontal, 12).frame(minHeight: 40).liquidSurface(radius: 22, interactive: true)
                 }.buttonStyle(FlowPress())
                 Button { settings = true } label: {
@@ -73,7 +72,7 @@ struct RootView: View {
             Group {
                 switch tab {
                 case 0: home
-                case 1: ChatView(text: $chatDraft, mode: $chatMode)
+                case 1: ChatView(text: $chatDraft)
                 case 2: LabsView()
                 case 3: ConnectView()
                 default: WorkflowsView()
@@ -87,6 +86,10 @@ struct RootView: View {
         .background { FlowBackdrop(tab: tab, busy: store.busy) }
         .preferredColorScheme(.light)
         .sheet(isPresented: $settings) { SettingsView().environmentObject(store).presentationDragIndicator(.visible).presentationCornerRadius(34) }
+        .sheet(isPresented:$cloudSettings) { CloudProvidersView(hub:store.cloud).environmentObject(store) }
+        .alert(item:Binding(get:{settings ? nil : store.pendingCloud},set:{if !settings {store.pendingCloud=$0}})) { approval in
+            cloudApprovalAlert(approval,store:store)
+        }
         .sheet(isPresented:$spatial) { SpatialWorkspace().environmentObject(store).presentationDragIndicator(.visible) }
         .onAppear {
             withAnimation(reduced ? .easeOut(duration: 0.15) : FlowMotion.hero) { entered = true }
@@ -107,7 +110,7 @@ struct RootView: View {
                 Button { navigate(1, mode: "chat") } label: {
                     HStack(spacing: 13) {
                         Image(systemName: "sparkle").font(.title2)
-                        Text("Ask, create, or automate…").font(.subheadline.weight(.medium))
+                        Text("Start a conversation…").font(.subheadline.weight(.medium))
                         Spacer()
                         Image(systemName: "arrow.up.right").font(.system(size: 15, weight: .semibold))
                     }.padding(19).liquidSurface(radius: 30, interactive: true, tint: Palette.lavender.opacity(0.25))
@@ -118,7 +121,7 @@ struct RootView: View {
                     Text("\(store.apps.count) apps · \(store.workflows.count) flows").font(.caption.monospacedDigit())
                 }
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                    homeTile("Create", "Build with AI", "plus.square.on.square", Palette.peach, 1, "app")
+                    homeTile("Create", "Build with AI", "plus.square.on.square", Palette.peach, 2, nil)
                     homeTile("Labs", "Apps & artifacts", "square.stack.3d.up", Palette.lavender, 2, nil)
                     homeTile("Connect", "Calls & email", "phone.bubble", Palette.mint, 3, nil)
                     homeTile("Automate", "Design a flow", "point.3.connected.trianglepath.dotted", Palette.lavender, 4, nil)
@@ -149,7 +152,7 @@ struct RootView: View {
 struct ChatView: View {
     @EnvironmentObject var store: Store
     @Binding var text: String
-    @Binding var mode: String
+    @State private var modelPicker = false
     @FocusState private var composerFocused: Bool
     @State private var follow = true
     var body: some View {
@@ -167,8 +170,7 @@ struct ChatView: View {
                         ForEach(store.chat) { line in
                             ChatBubble(line: line)
                         }
-                        AgentProgressView()
-                        if !store.artifacts.isEmpty { ArtifactLibrary() }
+                        if store.activeMode == "chat" { AgentProgressView() }
                         Color.clear.frame(height: 1).id("bottom")
                     }.padding(16)
                 }
@@ -177,13 +179,13 @@ struct ChatView: View {
                 .onChange(of: store.chat.count) { _, _ in if follow { proxy.scrollTo("bottom", anchor: .bottom) } }
             }
             VStack(spacing: 8) {
-                FlowModePicker(selection: $mode, options: [("chat", "Chat"), ("app", "Build app"), ("workflow", "Workflow")]).disabled(store.busy)
+                ChatBackendPicker(hub:store.cloud,mode:"chat")
                 HStack {
-                    TextField(mode == "chat" ? "Ask anything" : "Describe what to build", text: $text, axis: .vertical).lineLimit(1...4).focused($composerFocused)
-                    if store.busy {
+                    TextField("Ask anything", text: $text, axis: .vertical).lineLimit(1...4).focused($composerFocused)
+                    if store.busy && store.activeMode == "chat" {
                         Button { store.stop() } label: { Image(systemName: "stop.circle.fill").font(.largeTitle) }.accessibilityLabel("Stop generation")
                     } else {
-                        Button { let value = text; text = ""; composerFocused = false; store.start(value, mode: mode) } label: { Image(systemName: "arrow.up.circle.fill").font(.largeTitle) }.disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        Button { let value = text; text = ""; composerFocused = false; store.start(value, mode: "chat") } label: { Image(systemName: "arrow.up.circle.fill").font(.largeTitle) }.disabled(store.busy || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
             }.glass().padding(.horizontal, 16).padding(.bottom, 8)
@@ -213,7 +215,7 @@ struct LabsView: View {
     @SceneStorage("flow.labs.title") private var title = ""
     @SceneStorage("flow.labs.fields") private var fields = "Name, Notes"
     @State private var selected: UUID?
-    var body: some View { ScrollView { VStack(alignment: .leading, spacing: 18) { FlowSectionTitle(title: "AI Labs", subtitle: "Build, preview and evolve your own applications."); VStack(alignment: .leading) { TextField("Describe a tracker or database app", text: $prompt, axis: .vertical).lineLimit(2...5); Button("Create with local AI") { store.start(prompt, mode: "app") }.buttonStyle(FlowPrimary()).disabled(store.busy || prompt.isEmpty) }.glass(); DisclosureGroup("Create manually") { TextField("App name", text: $title); TextField("Fields separated by commas", text: $fields); Button("Create app") { let plan = Plan(action: "app", title: title, fields: fields.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }); if let app = Validation.miniApp(plan) { store.apps.append(app); title = "" } }.disabled(title.isEmpty) }.glass(); AgentProgressView(); ArtifactLibrary(); Text("My applications").font(.title2.bold()); ForEach(store.apps) { app in Button { selected = app.id } label: { HStack { Image(systemName: "square.stack"); Text(app.title); Spacer(); Text("\(app.rows.count)"); Image(systemName: "chevron.right") }.glass() }.buttonStyle(FlowPress()) } }.padding(20) }.sheet(isPresented: Binding(get: { selected != nil }, set: { if !$0 { selected = nil } })) { if let selected, let index = store.apps.firstIndex(where: { $0.id == selected }) { MiniAppView(app: $store.apps[index]) } } }
+    var body: some View { ScrollView { VStack(alignment: .leading, spacing: 18) { FlowSectionTitle(title: "AI Labs", subtitle: "Build, preview and evolve your own applications."); VStack(alignment: .leading) { ChatBackendPicker(hub:store.cloud,mode:"app"); TextField("Describe a tracker or database app", text: $prompt, axis: .vertical).lineLimit(2...5); Button("Create with local AI") { store.start(prompt, mode: "app") }.buttonStyle(FlowPrimary()).disabled(store.busy || prompt.isEmpty) }.glass(); DisclosureGroup("Create manually") { TextField("App name", text: $title); TextField("Fields separated by commas", text: $fields); Button("Create app") { let plan = Plan(action: "app", title: title, fields: fields.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }); if let app = Validation.miniApp(plan) { store.apps.append(app); title = "" } }.disabled(title.isEmpty) }.glass(); if store.activeMode == "app" { AgentProgressView() }; ArtifactLibrary(kind:"app"); Text("My applications").font(.title2.bold()); ForEach(store.apps) { app in Button { selected = app.id } label: { HStack { Image(systemName: "square.stack"); Text(app.title); Spacer(); Text("\(app.rows.count)"); Image(systemName: "chevron.right") }.glass() }.buttonStyle(FlowPress()) } }.padding(20) }.sheet(isPresented: Binding(get: { selected != nil }, set: { if !$0 { selected = nil } })) { if let selected, let index = store.apps.firstIndex(where: { $0.id == selected }) { MiniAppView(app: $store.apps[index]) } } }
 }
 struct MiniAppView: View {
     @Binding var app: MiniApp
@@ -253,7 +255,7 @@ struct WorkflowsView: View {
     @State private var checked: Set<String> = []
     @State private var shortcut = ""
     @Environment(\.openURL) private var openURL
-    var body: some View { ScrollView { VStack(alignment: .leading, spacing: 18) { FlowSectionTitle(title: "Automation Studio", subtitle: "Turn intention into repeatable workflows."); VStack(alignment: .leading) { TextField("Describe a routine", text: $prompt, axis: .vertical).lineLimit(2...5); Button("Generate workflow") { store.start(prompt, mode: "workflow") }.buttonStyle(FlowPrimary()).disabled(store.busy || prompt.isEmpty) }.glass(); AgentProgressView(); ArtifactLibrary(kind: "workflow"); ForEach(store.workflows) { flow in VStack(alignment: .leading, spacing: 10) { Text(flow.title).font(.headline); Text("Manual checklist · not background automation").font(.caption); ForEach(Array(flow.steps.enumerated()), id: \.offset) { i, step in let key = "\(flow.id)-\(i)"; Button { if checked.contains(key) { checked.remove(key) } else { checked.insert(key) } } label: { HStack { Image(systemName: checked.contains(key) ? "checkmark.circle.fill" : "circle"); Text(step) } }.buttonStyle(FlowPress()) } }.glass() }; VStack(alignment: .leading) { Text("Apple Shortcuts").font(.headline); TextField("Existing shortcut name", text: $shortcut); Button("Run installed shortcut") { var parts = URLComponents(); parts.scheme = "shortcuts"; parts.host = "run-shortcut"; parts.queryItems = [URLQueryItem(name: "name", value: shortcut)]; if let url = parts.url { openURL(url) } }.buttonStyle(FlowPrimary()).disabled(shortcut.isEmpty); Button("Open Shortcuts") { if let url = URL(string: "shortcuts://") { openURL(url) } } }.glass() }.padding(20) } }
+    var body: some View { ScrollView { VStack(alignment: .leading, spacing: 18) { FlowSectionTitle(title: "Automation Studio", subtitle: "Turn intention into repeatable workflows."); VStack(alignment: .leading) { ChatBackendPicker(hub:store.cloud,mode:"workflow"); TextField("Describe a routine", text: $prompt, axis: .vertical).lineLimit(2...5); Button("Generate workflow") { store.start(prompt, mode: "workflow") }.buttonStyle(FlowPrimary()).disabled(store.busy || prompt.isEmpty) }.glass(); if store.activeMode == "workflow" { AgentProgressView() }; ArtifactLibrary(kind: "workflow"); ForEach(store.workflows) { flow in VStack(alignment: .leading, spacing: 10) { Text(flow.title).font(.headline); Text("Manual checklist · not background automation").font(.caption); ForEach(Array(flow.steps.enumerated()), id: \.offset) { i, step in let key = "\(flow.id)-\(i)"; Button { if checked.contains(key) { checked.remove(key) } else { checked.insert(key) } } label: { HStack { Image(systemName: checked.contains(key) ? "checkmark.circle.fill" : "circle"); Text(step) } }.buttonStyle(FlowPress()) } }.glass() }; VStack(alignment: .leading) { Text("Apple Shortcuts").font(.headline); TextField("Existing shortcut name", text: $shortcut); Button("Run installed shortcut") { var parts = URLComponents(); parts.scheme = "shortcuts"; parts.host = "run-shortcut"; parts.queryItems = [URLQueryItem(name: "name", value: shortcut)]; if let url = parts.url { openURL(url) } }.buttonStyle(FlowPrimary()).disabled(shortcut.isEmpty); Button("Open Shortcuts") { if let url = URL(string: "shortcuts://") { openURL(url) } } }.glass() }.padding(20) } }
 }
 struct ConnectView: View {
     @Environment(\.openURL) private var openURL
@@ -284,5 +286,10 @@ struct WebPage: UIViewRepresentable { let url: URL; func makeUIView(context: Con
 struct SettingsView: View {
     @EnvironmentObject var store: Store
     @State private var importing = false
-    var body: some View { NavigationStack { Form { Section("Local AI") { Text(store.status); Button("Import .litertlm model") { importing = true }.disabled(store.busy); Link("Find compatible models", destination: URL(string: "https://huggingface.co/litert-community")!); Text("No cloud inference. Small quantized models recommended; actual RAM usage depends on the model.").font(.caption) }; ThemeStudio(); Section("Privacy") { Text("Chats and app records are stored locally. Mail and web connections use their respective services."); Button("Clear chat history", role: .destructive) { store.chat = [] }.disabled(store.busy) } }.navigationTitle("Settings").fileImporter(isPresented: $importing, allowedContentTypes: [.data]) { result in switch result { case .success(let url): store.importModel(url); case .failure(let error): store.status = error.localizedDescription } } } }
+    @State private var providers = false
+    var body: some View { NavigationStack { Form { Section("Inference") { Button("Cloud providers & model routing") { providers=true } }; Section("Local AI") { Text(store.status); Button("Import .litertlm model") { importing = true }.disabled(store.busy); Link("Find compatible models", destination: URL(string: "https://huggingface.co/litert-community")!); Text("No cloud inference. Small quantized models recommended; actual RAM usage depends on the model.").font(.caption) }; ThemeStudio(); Section("Privacy") { Text("Chats and app records are stored locally. Mail and web connections use their respective services."); Button("Clear chat history", role: .destructive) { store.chat = [] }.disabled(store.busy) } }.navigationTitle("Settings").alert(item:$store.pendingCloud) { approval in cloudApprovalAlert(approval,store:store) }.sheet(isPresented:$providers) { CloudProvidersView(hub:store.cloud).environmentObject(store) }.fileImporter(isPresented: $importing, allowedContentTypes: [.data]) { result in switch result { case .success(let url): store.importModel(url); case .failure(let error): store.status = error.localizedDescription } } } }
+}
+
+@MainActor func cloudApprovalAlert(_ approval:Store.CloudApproval,store:Store)->Alert {
+    Alert(title:Text("Send to \(approval.route.provider.title)?"),message:Text("\(approval.route.model) will receive this request\(approval.mode == "chat" ? " and bounded chat history" : ""). API charges may apply."),primaryButton:.default(Text("Send")){store.approveCloud(approval)},secondaryButton:.cancel())
 }

@@ -15,6 +15,10 @@ import SwiftUI
     @Published var stage = "Idle"
     @Published var activity: [String] = []
     @Published var activeMode = "chat"
+    let cloud = CloudHub()
+    @Published var pendingCloud: CloudApproval?
+    struct CloudApproval: Identifiable { let id = UUID(); let text: String; let mode: String; let route: CloudRoute }
+    func backendLabel(_ mode:String) -> String { cloud.route(mode).map { $0.provider.title + " · " + $0.model } ?? "On-device AI" }
     @Published var theme = FlowTheme.aurora { didSet { save(theme, "theme") } }
     private let liveActivity = FlowLiveActivity()
     func applyTheme(_ theme: FlowTheme) { if theme.isValid { self.theme = theme } }
@@ -65,22 +69,30 @@ import SwiftUI
         else if message.contains("Publishing") { liveActivity.update("Publishing") }
     }
     func start(_ input: String, mode: String = "chat") {
-        guard !busy, job == nil, !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        job = Task { await send(input, mode: mode); job = nil }
+        guard !busy, job == nil, pendingCloud == nil, !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        if let route=cloud.route(mode) { pendingCloud=CloudApproval(text:input,mode:mode,route:route); return }
+        launch(input,mode:mode,route:nil)
+    }
+    func approveCloud(_ approval:CloudApproval) { pendingCloud=nil; launch(approval.text,mode:approval.mode,route:approval.route) }
+    private func launch(_ input:String,mode:String,route:CloudRoute?) {
+        guard !busy,job==nil else {return}
+        job = Task { await send(input, mode: mode, route:route); job = nil }
     }
     func stop() {
         guard busy else { return }
-        stage = "Stopping local inference…"
+        stage = "Stopping inference…"
         job?.cancel()
         brain.stop()
     }
-    func send(_ input: String, mode: String = "chat") async {
+    func send(_ input: String, mode: String = "chat", route:CloudRoute? = nil) async {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, !busy else { return }
-        chat.append(ChatLine(user: true, text: text))
-        guard let model else {
-            stage = "Import a compatible model in Settings"
-            chat.append(ChatLine(user: false, text: stage)); return
+        if mode == "chat" { chat.append(ChatLine(user: true, text: text)) }
+        let localModel = self.model
+        guard route != nil || localModel != nil else {
+            stage = "Import a local model or assign a cloud provider in Settings"
+            activity=[stage]; activeMode=mode
+            if mode == "chat" { chat.append(ChatLine(user: false, text: stage)) }; return
         }
         busy = true; activeMode = mode; live = ""; activity = []; timedOut = false
         liveActivity.begin()
@@ -102,7 +114,18 @@ import SwiftUI
             liveActivity.end(done ? "Complete" : "Finished · review FlowOS")
             if done { FlowFeedback.shared.play(true) }
         }
-        let request = String(text.prefix(600))
+        let request = String(text.prefix(route == nil ? 600 : min(route?.contextCharacters ?? 12000,24000)))
+        // Cloud routes are opt-in per request. Never fall back from local to cloud.
+        func infer(_ prompt:String, chatHistory:Bool = false) async throws -> String {
+            let chunk: (String)->Void = { value in self.live=value; self.lastProgress=Date() }
+            let status: (String)->Void = { self.mark($0) }
+            if let route {
+                let turns = chatHistory ? self.chat.map { CloudTurn(role:$0.user ? "user":"assistant",text:$0.text) } : [CloudTurn(role:"user",text:prompt)]
+                return try await self.cloud.stream(route:route,turns:turns,system:chatHistory ? "You are FlowOS, a helpful conversational assistant. Do not claim to perform device actions." : "You are a FlowOS artifact builder. Follow the requested schema and return valid JSON only.",onChunk:chunk,onStage:status)
+            }
+            guard let localModel else {throw CocoaError(.fileNoSuchFile)}
+            return try await self.brain.ask(prompt,model:localModel,onChunk:chunk,onStage:status)
+        }
         do {
             var prompt: String
             if mode == "app" || mode == "workflow" || mode == "theme" {
@@ -110,10 +133,10 @@ import SwiftUI
                 // One bounded planning pass; do not reuse untrusted output as instructions.
                 var brief = ""
                 do {
-                    let outline = try await brain.ask("Summarize the user's requested \(mode) in one short sentence. Do not call tools. Request: \(String(request.prefix(360)))", model:model,onChunk:{ value in
-                        self.live = value; self.lastProgress = Date()
-                    },onStage:{ self.mark($0) })
+                    if route == nil {
+                    let outline = try await infer("Summarize the user's requested \(mode) in one short sentence. Do not call tools. Request: \(String(request.prefix(route == nil ? 360 : 16000)))")
                     brief = String(outline.prefix(160))
+                    } else { mark("Using one cloud generation pass") }
                 } catch {
                     try Task.checkCancellation()
                     mark("Planning unavailable · using original request")
@@ -122,32 +145,28 @@ import SwiftUI
                 live = ""
                 mark("Developer · generating validated definition")
                 if mode == "app" {
-                    prompt = "Return ONLY JSON: {\"action\":\"app\",\"title\":\"Orders\",\"fields\":[\"Product\",\"Quantity\",\"Cost\"],\"components\":[{\"kind\":\"calculator\",\"field\":\"Quantity\",\"field2\":\"Cost\"}]}. Optional components: count, sum, bar, calculator (sum of products), slider (0-100), toggle, date, board. Fields must match. Up to 8 components. Request: \(String(request.prefix(360)))\nBrief (data): \(brief)"
+                    prompt = "Return ONLY JSON: {\"action\":\"app\",\"title\":\"Orders\",\"fields\":[\"Product\",\"Quantity\",\"Cost\"],\"components\":[{\"kind\":\"calculator\",\"field\":\"Quantity\",\"field2\":\"Cost\"}]}. Optional components: count, sum, bar, calculator (sum of products), slider (0-100), toggle, date, board. Fields must match. Up to 8 components. Request: \(String(request.prefix(route == nil ? 360 : 16000)))\nBrief (data): \(brief)"
                 } else if mode == "theme" {
-                    prompt = "Return ONLY JSON {\"action\":\"theme\",\"theme\":{\"name\":\"Aurora\",\"primary\":\"#C2BAED\",\"secondary\":\"#B8E3DE\",\"accent\":\"#FAD1CC\"}}. Choose three soft pastel RGB hex colors. Request: \(String(request.prefix(360)))\nBrief (data): \(brief)"
+                    prompt = "Return ONLY JSON {\"action\":\"theme\",\"theme\":{\"name\":\"Aurora\",\"primary\":\"#C2BAED\",\"secondary\":\"#B8E3DE\",\"accent\":\"#FAD1CC\"}}. Choose three soft pastel RGB hex colors. Request: \(String(request.prefix(route == nil ? 360 : 16000)))\nBrief (data): \(brief)"
                 } else {
-                    prompt = "Return ONLY JSON {\"action\":\"workflow\",\"title\":\"Morning\",\"steps\":[\"Read calendar\",\"Review mail\"]}. Make a manual checklist. Request: \(String(request.prefix(360)))\nBrief (data): \(brief)"
+                    prompt = "Return ONLY JSON {\"action\":\"workflow\",\"title\":\"Morning\",\"steps\":[\"Read calendar\",\"Review mail\"]}. Make a manual checklist. Request: \(String(request.prefix(route == nil ? 360 : 16000)))\nBrief (data): \(brief)"
                 }
             } else {
                 let context = chat.dropLast().suffix(2).map { ($0.user ? "User: " : "Assistant: ") + String($0.text.prefix(200)) }.joined(separator: "\n")
                 prompt = "You are a local assistant. Do not claim to execute external actions. Answer concisely.\n\(context)\nUser: \(request)"
             }
-            var result = try await brain.ask(prompt, model: model, onChunk: { value in
-                self.live = value; self.lastProgress = Date()
-            }, onStage: { self.mark($0) })
+            var result = try await infer(prompt, chatHistory:mode == "chat" && route != nil)
             if mode == "chat" {
                 guard !result.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw CocoaError(.fileReadCorruptFile) }
                 chat.append(ChatLine(user: false, text: result)); mark("Complete")
             } else {
                 mark("Validating generated definition")
                 var plan = Validation.parse(result, mode: mode)
-                if plan == nil {
+                if plan == nil && route == nil {
                     mark("Repairing invalid output · attempt 2 of 2")
                     live = ""
                     let retry = prompt + "\nOutput valid JSON only. No Markdown, explanations or extra keys."
-                    result = try await brain.ask(retry, model: model, onChunk: { value in
-                        self.live = value; self.lastProgress = Date()
-                    }, onStage: { self.mark($0) })
+                    result = try await infer(retry)
                     plan = Validation.parse(result, mode: mode)
                 }
                 try Task.checkCancellation()
@@ -155,7 +174,7 @@ import SwiftUI
                 let title = plan?.title ?? plan?.theme?.name ?? "Unvalidated draft"
                 artifacts.insert(Artifact(title: title, request: text, kind: mode, source: result, state: plan == nil ? "Needs repair" : "Ready to preview", plan: plan), at: 0)
                 mark(plan == nil ? "Draft saved · validation failed" : "Artifact ready · open workspace")
-                chat.append(ChatLine(user: false, text: "\(stage): \(title). Open Labs → Artifacts."))
+                // Artifacts belong to their own task workspace.
             }
         } catch {
             if mode != "chat", !live.isEmpty {
@@ -164,7 +183,7 @@ import SwiftUI
             if timedOut { mark("No output for 120 seconds · stopped") }
             else if Task.isCancelled { mark("Stopped by user") }
             else { mark("Failed: \(error.localizedDescription)") }
-            chat.append(ChatLine(user: false, text: stage))
+            if mode == "chat" { if !live.isEmpty { chat.append(ChatLine(user:false,text:live+"\n\n[Interrupted]")) }; chat.append(ChatLine(user:false,text:stage)) }
         }
     }
     func install(_ id: UUID) {
