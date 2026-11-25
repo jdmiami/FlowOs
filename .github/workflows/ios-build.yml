@@ -20,7 +20,7 @@ jobs:
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
           xcodegen generate
       - name: Core tests
-        run: swiftc FlowOS/Models.swift Tests/main.swift -o /tmp/flow-tests && /tmp/flow-tests
+        run: swiftc FlowOS/Models.swift FlowOS/FlowSchema.swift Tests/main.swift -o /tmp/flow-tests && /tmp/flow-tests
       - name: Compile physical iPhone app
         run: |
           set -o pipefail
@@ -32,12 +32,22 @@ jobs:
           test -f "$APP/Info.plist"
           mkdir -p staging/Payload
           ditto "$APP" staging/Payload/FlowOS.app
+          test -d staging/Payload/FlowOS.app/PlugIns/FlowWidgets.appex
+          (cd staging && zip -qry ../FlowOS-LiveActivities-unsigned.ipa Payload)
+          rm -rf staging/Payload/FlowOS.app/PlugIns
+          /usr/libexec/PlistBuddy -c "Set :NSSupportsLiveActivities false" staging/Payload/FlowOS.app/Info.plist
           (cd staging && zip -qry ../FlowOS-unsigned.ipa Payload)
           unzip -t FlowOS-unsigned.ipa
+          unzip -t FlowOS-LiveActivities-unsigned.ipa
       - uses: actions/upload-artifact@v4
         with:
           name: FlowOS-unsigned-IPA
           path: FlowOS-unsigned.ipa
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FlowOS-LiveActivities-unsigned-IPA
+          path: FlowOS-LiveActivities-unsigned.ipa
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()

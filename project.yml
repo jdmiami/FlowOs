@@ -10,19 +10,39 @@ targets:
   FlowOS:
     type: application
     platform: iOS
-    sources: [FlowOS]
+    sources: [FlowOS, Shared]
     dependencies:
       - package: LiteRTLM
         product: LiteRTLM
+      - target: FlowWidgets
+        embed: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.flowos.personal
         SWIFT_VERSION: '5.0'
-        MARKETING_VERSION: '0.4.0'
-        CURRENT_PROJECT_VERSION: '4'
+        MARKETING_VERSION: '0.5.0'
+        CURRENT_PROJECT_VERSION: '5'
         GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSSupportsLiveActivities: YES
         INFOPLIST_KEY_CADisableMinimumFrameDurationOnPhone: YES
         INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription: Create events you approve.
         INFOPLIST_KEY_NSContactsUsageDescription: Find contacts for calls you request.
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
+  FlowWidgets:
+    type: app-extension
+    platform: iOS
+    sources: [FlowWidgets, Shared]
+    info:
+      path: FlowWidgets/Info.plist
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.flowos.personal.widgets
+        SWIFT_VERSION: '5.0'
+        MARKETING_VERSION: '0.5.0'
+        CURRENT_PROJECT_VERSION: '5'
+        SKIP_INSTALL: YES
+        APPLICATION_EXTENSION_API_ONLY: YES

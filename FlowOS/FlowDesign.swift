@@ -4,7 +4,7 @@ import UIKit
 enum FlowMotion {
     static let snap = Animation.spring(duration: 0.32, bounce: 0.38)
     static let elastic = Animation.spring(duration: 0.68, bounce: 0.48)
-    static let hero = Animation.spring(duration: 0.88, bounce: 0.56)
+    static let hero = Animation.spring(duration: 1.34, bounce: 0.52)
 }
 
 struct LiquidSurface: ViewModifier {
@@ -70,19 +70,21 @@ struct FlowBackdrop: View {
     @Environment(\.accessibilityReduceMotion) private var reduced
     @Environment(\.accessibilityReduceTransparency) private var solid
     @State private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+    @Environment(\.renderBudget) private var budget
+    @Environment(\.flowTheme) private var theme
     private var colors: [Color] {
         switch tab {
-        case 1: return [Palette.lavender, Palette.mint]
-        case 2: return [Palette.peach, Palette.lavender]
-        case 3: return [Palette.mint, Palette.peach]
-        case 4: return [Palette.lavender, Palette.peach]
-        default: return [Palette.lavender, Palette.mint]
+        case 1: return [Color(flowHex:theme.primary),Color(flowHex:theme.secondary)]
+        case 2: return [Color(flowHex:theme.accent),Color(flowHex:theme.primary)]
+        case 3: return [Color(flowHex:theme.secondary),Color(flowHex:theme.accent)]
+        case 4: return [Color(flowHex:theme.primary),Color(flowHex:theme.accent)]
+        default: return [Color(flowHex:theme.primary),Color(flowHex:theme.secondary)]
         }
     }
     var body: some View {
         GeometryReader { geo in
-            TimelineView(.animation(minimumInterval: 1.0 / 24, paused: reduced || busy || lowPower || solid)) { timeline in
-                let t = reduced || busy || lowPower ? 0 : timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 60)
+            TimelineView(.animation(minimumInterval: 1.0 / 24, paused: reduced || busy || lowPower || solid || !budget.ambient)) { timeline in
+                let t = reduced || busy || lowPower || !budget.ambient ? 0 : timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 60)
                 ZStack {
                     Color(red: 0.98, green: 0.975, blue: 0.99)
                     if !solid {
@@ -90,7 +92,7 @@ struct FlowBackdrop: View {
                             .blur(radius: 70).offset(x: -90 + 24 * sin(t * 0.31), y: -geo.size.height * 0.36)
                         Ellipse().fill(colors[1].opacity(0.42)).frame(width: geo.size.width * 1.2, height: 410)
                             .blur(radius: 74).offset(x: 100 + 30 * cos(t * 0.25), y: geo.size.height * 0.30)
-                        Ellipse().fill(Palette.peach.opacity(0.28)).frame(width: 270, height: 320)
+                        Ellipse().fill(Color(flowHex:theme.accent).opacity(0.28)).frame(width: 270, height: 320)
                             .blur(radius: 65).offset(x: -100, y: 90 + 18 * sin(t * 0.4))
                     }
                 }.frame(width: geo.size.width, height: geo.size.height).clipped()
@@ -129,14 +131,14 @@ struct LiquidOrb: View {
     @State private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
     @State private var feedback = 0
     var body: some View {
-        TimelineView(.animation(minimumInterval: busy ? 1.0 / 15 : 1.0 / 30, paused: reduced || lowPower)) { timeline in
-            let t = reduced || lowPower ? 0 : timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 120)
+        TimelineView(.animation(minimumInterval: busy ? 1.0 / 15 : 1.0 / 30, paused: reduced || lowPower || !budget.ambient)) { timeline in
+            let t = reduced || lowPower || !budget.ambient ? 0 : timeline.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 120)
             let phase = t * (busy ? 2.4 : 0.8)
             let amp = reduced ? 0.04 : (busy ? 0.13 : 0.085) + min(0.12, Double(abs(drag.width) + abs(drag.height)) / 700)
             ZStack {
                 Circle().fill(Palette.lavender.opacity(0.32)).frame(width: 175, height: 175).blur(radius: 28).offset(y: 22)
                 FluidBlob(phase: phase, amplitude: amp)
-                    .fill(RadialGradient(colors: [.white, Color(red: 0.86, green: 0.81, blue: 0.98), Palette.lavender, Palette.mint, Palette.peach], center: UnitPoint(x: 0.29 + Double(drag.width) / 500, y: 0.24 + Double(drag.height) / 500), startRadius: 5, endRadius: 142))
+                    .fill(RadialGradient(colors: [.white, Color(red: 0.86, green: 0.81, blue: 0.98), Color(flowHex:theme.primary), Color(flowHex:theme.secondary), Color(flowHex:theme.accent)], center: UnitPoint(x: 0.29 + Double(drag.width) / 500, y: 0.24 + Double(drag.height) / 500), startRadius: 5, endRadius: 142))
                     .overlay { FluidBlob(phase: phase, amplitude: amp).strokeBorderCompat(.white.opacity(0.82)) }
                 FluidBlob(phase: phase + 1.6, amplitude: amp * 0.8)
                     .fill(LinearGradient(colors: [.white.opacity(0.8), .white.opacity(0.03), Palette.lavender.opacity(0.30)], startPoint: .topLeading, endPoint: .bottomTrailing))
@@ -175,7 +177,7 @@ struct FlowDock: View {
         HStack(spacing: 0) {
             ForEach(items.indices, id: \.self) { index in
                 Button {
-                    withAnimation(reduced ? .easeOut(duration: 0.15) : FlowMotion.elastic) { selection = index }
+                    withAnimation(reduced ? .easeOut(duration: 0.15) : FlowMotion.elastic) { selection = index }; FlowFeedback.shared.play()
                 } label: {
                     VStack(spacing: 5) {
                         Image(systemName: items[index].1)

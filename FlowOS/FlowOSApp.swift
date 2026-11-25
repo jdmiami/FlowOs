@@ -7,9 +7,24 @@ import WebKit
 
 @main struct FlowOSApp: App {
     @StateObject private var store = Store()
-    var body: some Scene { WindowGroup { RootView().environmentObject(store) } }
+    var body: some Scene { WindowGroup { LivingRoot().environmentObject(store) } }
 }
 
+struct LivingRoot: View {
+    @EnvironmentObject var store: Store
+    @Environment(\.scenePhase) private var scene
+    @Environment(\.accessibilityReduceMotion) private var reduced
+    @AppStorage("flow.effects") private var effects = true
+    @State private var thermal = ProcessInfo.processInfo.thermalState
+    @State private var lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled
+    var body: some View {
+        RootView()
+            .environment(\.flowTheme,store.theme)
+            .environment(\.renderBudget,RenderBudget(lowPower:lowPower,thermal:thermal,busy:store.busy,reducedMotion:reduced,effectsEnabled:effects,foreground:scene == .active))
+            .onReceive(NotificationCenter.default.publisher(for:ProcessInfo.thermalStateDidChangeNotification)) { _ in thermal = ProcessInfo.processInfo.thermalState }
+            .onReceive(NotificationCenter.default.publisher(for:.NSProcessInfoPowerStateDidChange)) { _ in lowPower = ProcessInfo.processInfo.isLowPowerModeEnabled }
+    }
+}
 enum Palette {
     static let lavender = Color(red: 0.76, green: 0.73, blue: 0.93)
     static let peach = Color(red: 0.98, green: 0.82, blue: 0.80)
@@ -22,13 +37,15 @@ struct RootView: View {
     @Environment(\.accessibilityReduceMotion) private var reduced
     @SceneStorage("flow.tab") private var tab = 0
     @State private var settings = false
+    @State private var spatial = false
+    @Environment(\.renderBudget) private var budget
     @State private var chatMode = "chat"
     @State private var chatDraft = ""
     @State private var entered = false
     let tabs = [("Home", "sparkle"), ("Chat", "bubble.left"), ("Labs", "square.stack.3d.up"), ("Connect", "phone"), ("Flow", "point.3.connected.trianglepath.dotted")]
     private func navigate(_ index: Int, mode: String? = nil) {
         if let mode, !store.busy { chatMode = mode }
-        withAnimation(reduced ? .easeOut(duration: 0.14) : FlowMotion.elastic) { tab = index }
+        withAnimation(reduced ? .easeOut(duration: 0.14) : FlowMotion.hero) { tab = index }; FlowFeedback.shared.play()
     }
     var body: some View {
         VStack(spacing: 7) {
@@ -70,6 +87,7 @@ struct RootView: View {
         .background { FlowBackdrop(tab: tab, busy: store.busy) }
         .preferredColorScheme(.light)
         .sheet(isPresented: $settings) { SettingsView().environmentObject(store).presentationDragIndicator(.visible).presentationCornerRadius(34) }
+        .sheet(isPresented:$spatial) { SpatialWorkspace().environmentObject(store).presentationDragIndicator(.visible) }
         .onAppear {
             withAnimation(reduced ? .easeOut(duration: 0.15) : FlowMotion.hero) { entered = true }
         }
@@ -78,7 +96,7 @@ struct RootView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 19) {
                 VStack(spacing: 1) {
-                    LiquidOrb(busy: store.busy, onOpen: { navigate(1) }).frame(maxWidth: .infinity)
+                    LivingPortal(busy:store.busy,stage:store.stage,navigate:{ navigate($0) }).frame(maxWidth:.infinity)
                     Text(store.busy ? "INTELLIGENCE IN MOTION" : "YOUR PERSONAL INTELLIGENCE")
                         .font(.caption2.weight(.semibold)).tracking(2.5).foregroundStyle(Palette.ink.opacity(0.62))
                 }.scaleEffect(entered || reduced ? 1 : 0.78).opacity(entered ? 1 : 0)
@@ -105,6 +123,8 @@ struct RootView: View {
                     homeTile("Connect", "Calls & email", "phone.bubble", Palette.mint, 3, nil)
                     homeTile("Automate", "Design a flow", "point.3.connected.trianglepath.dotted", Palette.lavender, 4, nil)
                 }
+                Button { spatial = true } label: { Label("Open spatial workspace",systemImage:"square.on.square").frame(maxWidth:.infinity) }.buttonStyle(FlowPrimary())
+                Text(budget.label).font(.caption.monospaced()).foregroundStyle(.secondary)
                 if store.busy { AgentProgressView() }
                 Text("PRIVATE BY DESIGN · LOCAL MODEL").font(.caption2.weight(.medium)).tracking(1.2).foregroundStyle(.secondary)
             }.padding(.horizontal, 22).padding(.bottom, 16)
@@ -197,8 +217,35 @@ struct LabsView: View {
 }
 struct MiniAppView: View {
     @Binding var app: MiniApp
-    @State private var draft: [String: String] = [:]
-    var body: some View { NavigationStack { Form { Section("Add record") { ForEach(app.fields, id: \.self) { field in TextField(field, text: Binding(get: { draft[field, default: ""] }, set: { draft[field] = $0 })) }; Button("Save record") { app.rows.append(draft); draft = [:] }.disabled(draft.values.allSatisfy(\.isEmpty)) }; Section("Records") { ForEach(app.rows.indices, id: \.self) { i in VStack(alignment: .leading) { ForEach(app.fields, id: \.self) { field in Text("\(field): \(app.rows[i][field, default: ""])") } } }.onDelete { app.rows.remove(atOffsets: $0) } } }.navigationTitle(app.title) } }
+    @Environment(\.dismiss) private var dismiss
+    @State private var draft: [String:String] = [:]
+    @State private var search = ""
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment:.leading,spacing:14) {
+                    FlowSectionTitle(title:app.title,subtitle:"Your generated application")
+                    GeneratedDashboard(rows:app.rows,components:app.components ?? [])
+                    VStack(alignment:.leading,spacing:12) {
+                        Text("Add record").font(.headline)
+                        GeneratedFields(fields:app.fields,components:app.components ?? [],draft:$draft)
+                        Button("Save record") { app.rows.append(draft); draft = [:]; FlowFeedback.shared.play() }.buttonStyle(FlowPrimary()).disabled(draft.values.allSatisfy(\.isEmpty))
+                    }.glass()
+                    TextField("Find records",text:$search).textFieldStyle(.roundedBorder)
+                    ForEach(app.rows.indices.filter { i in search.isEmpty || app.rows[i].values.contains { $0.localizedCaseInsensitiveContains(search) } },id:\.self) { i in
+                        VStack(alignment:.leading,spacing:8) {
+                            ForEach(app.fields,id:\.self) { field in
+                                HStack { Text(field).font(.caption); Spacer(); Text(app.rows[i][field,default:""]).font(.subheadline).textSelection(.enabled) }
+                            }
+                            Button("Delete record",role:.destructive) { app.rows.remove(at:i) }.font(.caption)
+                        }.glass()
+                    }
+                }.padding(20)
+            }.background { FlowBackdrop(tab:2,busy:false) }
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement:.cancellationAction) { Button("Done") { dismiss() } } }
+        }
+    }
 }
 struct WorkflowsView: View {
     @EnvironmentObject var store: Store
@@ -237,5 +284,5 @@ struct WebPage: UIViewRepresentable { let url: URL; func makeUIView(context: Con
 struct SettingsView: View {
     @EnvironmentObject var store: Store
     @State private var importing = false
-    var body: some View { NavigationStack { Form { Section("Local AI") { Text(store.status); Button("Import .litertlm model") { importing = true }.disabled(store.busy); Link("Find compatible models", destination: URL(string: "https://huggingface.co/litert-community")!); Text("No cloud inference. Small quantized models recommended; actual RAM usage depends on the model.").font(.caption) }; Section("Privacy") { Text("Chats and app records are stored locally. Mail and web connections use their respective services."); Button("Clear chat history", role: .destructive) { store.chat = [] }.disabled(store.busy) } }.navigationTitle("Settings").fileImporter(isPresented: $importing, allowedContentTypes: [.data]) { result in switch result { case .success(let url): store.importModel(url); case .failure(let error): store.status = error.localizedDescription } } } }
+    var body: some View { NavigationStack { Form { Section("Local AI") { Text(store.status); Button("Import .litertlm model") { importing = true }.disabled(store.busy); Link("Find compatible models", destination: URL(string: "https://huggingface.co/litert-community")!); Text("No cloud inference. Small quantized models recommended; actual RAM usage depends on the model.").font(.caption) }; ThemeStudio(); Section("Privacy") { Text("Chats and app records are stored locally. Mail and web connections use their respective services."); Button("Clear chat history", role: .destructive) { store.chat = [] }.disabled(store.busy) } }.navigationTitle("Settings").fileImporter(isPresented: $importing, allowedContentTypes: [.data]) { result in switch result { case .success(let url): store.importModel(url); case .failure(let error): store.status = error.localizedDescription } } } }
 }

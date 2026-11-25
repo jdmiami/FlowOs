@@ -59,7 +59,7 @@ struct ArtifactLibrary: View {
             ForEach(filtered) { artifact in
                 Button { selected = artifact } label: {
                     HStack(spacing: 12) {
-                        Image(systemName: artifact.kind == "app" ? "square.stack" : "point.3.connected.trianglepath.dotted").font(.title2)
+                        Image(systemName: artifact.kind == "app" ? "square.stack" : artifact.kind == "theme" ? "paintpalette" : "point.3.connected.trianglepath.dotted").font(.title2)
                             .frame(width: 50, height: 50).background((artifact.kind == "app" ? Palette.lavender : Palette.mint).opacity(0.48), in: RoundedRectangle(cornerRadius: 18))
                         VStack(alignment: .leading) {
                             Text(artifact.title).font(.headline)
@@ -99,13 +99,18 @@ struct ArtifactDetail: View {
                                 if artifact.kind == "app", let fields = plan.fields {
                                     Text("Interactive sandbox").font(.headline)
                                     Text("Sample records are temporary until you install the app.").font(.caption)
+                                    GeneratedDashboard(rows:rows,components:plan.components ?? [])
                                     VStack(alignment: .leading, spacing: 12) {
-                                        ForEach(fields, id: \.self) { field in
-                                            TextField(field, text: Binding(get: { draft[field, default: ""] }, set: { draft[field] = $0 })).textFieldStyle(.roundedBorder)
-                                        }
+                                        GeneratedFields(fields:fields,components:plan.components ?? [],draft:$draft)
                                         Button("Add sample record") { rows.append(draft); draft = [:] }.buttonStyle(FlowPrimary()).disabled(draft.values.allSatisfy(\.isEmpty))
                                     }.glass()
                                     ForEach(rows.indices, id: \.self) { i in VStack(alignment: .leading) { ForEach(fields, id: \.self) { field in Text("\(field): \(rows[i][field, default: ""])") } }.glass() }
+                                } else if let theme = plan.theme, theme.isValid {
+                                    VStack(alignment:.leading,spacing:10) {
+                                        Text(theme.name).font(.title2)
+                                        HStack(spacing:0) { ForEach([theme.primary,theme.secondary,theme.accent],id:\.self) { hex in Color(flowHex:hex).frame(height:85) } }.clipShape(RoundedRectangle(cornerRadius:20))
+                                        Button("Apply theme") { store.applyTheme(theme); FlowFeedback.shared.play(true) }.buttonStyle(FlowPrimary())
+                                    }.glass()
                                 } else {
                                     Text("Workflow preview · manual checklist").font(.headline)
                                     ForEach(Array((plan.steps ?? []).enumerated()), id: \.offset) { i, step in
@@ -124,7 +129,7 @@ struct ArtifactDetail: View {
                             Text(artifact.created.formatted()).font(.caption)
                         }
                         if artifact.plan != nil && artifact.installedID == nil {
-                            Button("Install in my library") { store.install(id) }.buttonStyle(FlowPrimary())
+                            Button(artifact.kind == "theme" ? "Save & apply theme" : "Install in my library") { store.install(id) }.buttonStyle(FlowPrimary())
                         }
                         VStack(alignment: .leading) {
                             TextField("Describe a change or retry", text: $revision, axis: .vertical)

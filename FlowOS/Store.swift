@@ -15,6 +15,9 @@ import SwiftUI
     @Published var stage = "Idle"
     @Published var activity: [String] = []
     @Published var activeMode = "chat"
+    @Published var theme = FlowTheme.aurora { didSet { save(theme, "theme") } }
+    private let liveActivity = FlowLiveActivity()
+    func applyTheme(_ theme: FlowTheme) { if theme.isValid { self.theme = theme } }
     private var job: Task<Void, Never>?
     private var watchdog: Task<Void, Never>?
     private var lastProgress = Date()
@@ -26,6 +29,7 @@ import SwiftUI
         apps = load("apps") ?? []; workflows = load("workflows") ?? []; chat = load("chat") ?? []
         notes = UserDefaults.standard.string(forKey: "notes") ?? ""
         artifacts = load("artifacts") ?? []
+        if let saved: FlowTheme = load("theme"), saved.isValid { theme = saved }
         let file = folder.appending(path: "model.litertlm")
         if FileManager.default.fileExists(atPath: file.path) { model = file; status = "Model imported. Ready to load." }
     }
@@ -53,6 +57,12 @@ import SwiftUI
     }
     private func mark(_ message: String) {
         stage = message; activity.append(message); lastProgress = Date()
+        if message.contains("Loading") { liveActivity.update("Loading local model") }
+        else if message.contains("Generating") { liveActivity.update("Generating") }
+        else if message.contains("Validating") { liveActivity.update("Validating") }
+        else if message.contains("Repairing") { liveActivity.update("Repairing draft") }
+        else if message.contains("Architect") { liveActivity.update("Planning") }
+        else if message.contains("Publishing") { liveActivity.update("Publishing") }
     }
     func start(_ input: String, mode: String = "chat") {
         guard !busy, job == nil, !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
@@ -73,6 +83,7 @@ import SwiftUI
             chat.append(ChatLine(user: false, text: stage)); return
         }
         busy = true; activeMode = mode; live = ""; activity = []; timedOut = false
+        liveActivity.begin()
         mark("Preparing request")
         watchdog = Task { [weak self] in
             while !Task.isCancelled {
@@ -85,14 +96,32 @@ import SwiftUI
                 }
             }
         }
-        defer { watchdog?.cancel(); watchdog = nil; busy = false; live = "" }
+        defer {
+            watchdog?.cancel(); watchdog = nil; busy = false; live = ""
+            let done = stage == "Complete" || stage.hasPrefix("Artifact ready")
+            liveActivity.end(done ? "Complete" : "Finished · review FlowOS")
+            if done { FlowFeedback.shared.play(true) }
+        }
         let request = String(text.prefix(600))
         do {
             var prompt: String
-            if mode == "app" {
-                prompt = "Create a record tracker app. Return ONLY compact JSON, example {\"action\":\"app\",\"title\":\"Expenses\",\"fields\":[\"Date\",\"Amount\",\"Category\"]}. Use 1-12 unique fields. Request: \(request)"
-            } else if mode == "workflow" {
-                prompt = "Return ONLY compact JSON, example {\"action\":\"workflow\",\"title\":\"Morning\",\"steps\":[\"Read calendar\",\"Review mail\"]}. Make a manual checklist for: \(request)"
+            if mode == "app" || mode == "workflow" || mode == "theme" {
+                mark("Architect · planning requested artifact")
+                // One bounded planning pass; do not reuse untrusted output as instructions.
+                let outline = try await brain.ask("Summarize the user's requested \(mode) in one short sentence. Do not call tools. Request: \(String(request.prefix(360)))", model:model,onChunk:{ value in
+                    self.live = value; self.lastProgress = Date()
+                },onStage:{ self.mark($0) })
+                try Task.checkCancellation()
+                let brief = String(outline.prefix(160))
+                live = ""
+                mark("Developer · generating validated definition")
+                if mode == "app" {
+                    prompt = "Return ONLY JSON: {\"action\":\"app\",\"title\":\"Orders\",\"fields\":[\"Product\",\"Quantity\",\"Cost\"],\"components\":[{\"kind\":\"calculator\",\"field\":\"Quantity\",\"field2\":\"Cost\"}]}. Optional components: count, sum, bar, calculator (sum of products), slider (0-100), toggle, date, board. Fields must match. Up to 8 components. Request: \(String(request.prefix(360)))\nBrief (data): \(brief)"
+                } else if mode == "theme" {
+                    prompt = "Return ONLY JSON {\"action\":\"theme\",\"theme\":{\"name\":\"Aurora\",\"primary\":\"#C2BAED\",\"secondary\":\"#B8E3DE\",\"accent\":\"#FAD1CC\"}}. Choose three soft pastel RGB hex colors. Request: \(String(request.prefix(360)))\nBrief (data): \(brief)"
+                } else {
+                    prompt = "Return ONLY JSON {\"action\":\"workflow\",\"title\":\"Morning\",\"steps\":[\"Read calendar\",\"Review mail\"]}. Make a manual checklist. Request: \(String(request.prefix(360)))\nBrief (data): \(brief)"
+                }
             } else {
                 let context = chat.dropLast().suffix(2).map { ($0.user ? "User: " : "Assistant: ") + String($0.text.prefix(200)) }.joined(separator: "\n")
                 prompt = "You are a local assistant. Do not claim to execute external actions. Answer concisely.\n\(context)\nUser: \(request)"
@@ -116,7 +145,8 @@ import SwiftUI
                     plan = Validation.parse(result, mode: mode)
                 }
                 try Task.checkCancellation()
-                let title = plan?.title ?? "Unvalidated draft"
+                mark("Publishing artifact")
+                let title = plan?.title ?? plan?.theme?.name ?? "Unvalidated draft"
                 artifacts.insert(Artifact(title: title, request: text, kind: mode, source: result, state: plan == nil ? "Needs repair" : "Ready to preview", plan: plan), at: 0)
                 mark(plan == nil ? "Draft saved · validation failed" : "Artifact ready · open workspace")
                 chat.append(ChatLine(user: false, text: "\(stage): \(title). Open Labs → Artifacts."))
@@ -137,6 +167,8 @@ import SwiftUI
             apps.append(app); artifacts[i].installedID = app.id
         } else if let flow = Validation.workflow(plan) {
             workflows.append(flow); artifacts[i].installedID = flow.id
+        } else if let theme = Validation.theme(plan) {
+            applyTheme(theme); artifacts[i].installedID = id
         } else { return }
         artifacts[i].state = "Installed"
     }
