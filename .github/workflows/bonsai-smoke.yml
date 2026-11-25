@@ -1,0 +1,49 @@
+name: Bonsai real inference smoke test
+on:
+  push:
+    branches: [bonsai-studio]
+    paths:
+      - 'FlowOS/Bonsai/**'
+      - 'Scripts/bonsai-*'
+      - '.github/workflows/bonsai-smoke.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: bonsai-smoke
+  cancel-in-progress: true
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install published LiteRT CPU runtime
+        run: pip install ai-edge-litert==2.3.0 numpy pillow transformers jinja2 huggingface_hub
+      - name: Prepare manifest and verify downloaded graphs
+        run: |
+          python Scripts/bonsai-manifest.py
+          python Scripts/bonsai-smoke.py
+      - name: Generate actual PNG with network disabled for model loading
+        run: |
+          set -o pipefail
+          HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 /usr/bin/time -v python /tmp/bonsai-model/generate.py --model-dir /tmp/bonsai-model --size 256 --steps 4 --threads 4 --prompt "a small bonsai tree in a blue ceramic pot" --seed 42 --out bonsai-smoke.png 2>&1 | tee bonsai-smoke.log
+          python - <<'PY'
+          from PIL import Image
+          import numpy as np
+          image=Image.open("bonsai-smoke.png").convert("RGB")
+          assert image.size==(256,256)
+          assert np.asarray(image).std()>1, "Image is effectively blank"
+          print("PASS: nonblank 256x256 PNG")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Bonsai-desktop-smoke
+          path: |
+            bonsai-smoke.png
+            bonsai-smoke.log
+          if-no-files-found: ignore
