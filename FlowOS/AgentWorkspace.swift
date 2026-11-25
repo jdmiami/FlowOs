@@ -149,7 +149,7 @@ struct ArtifactDetail: View {
     }
 }
 struct SourceDocument: FileDocument {
-    static var readableContentTypes: [UTType] { [.plainText] }
+    static var readableContentTypes: [UTType] { [.plainText, .html] }
     var text: String
     init(text: String) { self.text = text }
     init(configuration: ReadConfiguration) throws {

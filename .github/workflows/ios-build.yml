@@ -20,7 +20,7 @@ jobs:
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
           xcodegen generate
       - name: Core tests
-        run: swiftc FlowOS/Models.swift FlowOS/FlowSchema.swift FlowOS/CloudSchema.swift Tests/main.swift -o /tmp/flow-tests && /tmp/flow-tests
+        run: swiftc FlowOS/Models.swift FlowOS/FlowSchema.swift FlowOS/CloudSchema.swift FlowOS/HTMLHarness.swift Tests/main.swift -o /tmp/flow-tests && /tmp/flow-tests
       - name: Compile physical iPhone app
         run: |
           set -o pipefail

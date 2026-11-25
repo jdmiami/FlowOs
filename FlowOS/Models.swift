@@ -48,6 +48,10 @@ struct Artifact: Codable, Identifiable {
     var state: String
     var plan: Plan?
     var installedID: UUID?
+    var htmlReport: HTMLReport? = nil
+    var revisionOf: UUID? = nil
+    var isHTML: Bool { kind == "html" }
+    var canRunHTML: Bool { isHTML && htmlReport?.passed == true }
 }
 extension Validation {
     static func theme(_ plan: Plan) -> FlowTheme? {

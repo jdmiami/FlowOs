@@ -67,7 +67,10 @@ struct SpatialWorkspace: View {
             }.padding(.bottom,16)
             .background { FlowBackdrop(tab:2,busy:store.busy) }
             .toolbar { ToolbarItem(placement:.cancellationAction) { Button("Done") { dismiss() } } }
-            .sheet(item:$selected) { artifact in ArtifactDetail(id:artifact.id).environmentObject(store) }
+            .sheet(item:$selected) { artifact in
+                if artifact.isHTML { HTMLArtifactView(id:artifact.id).environmentObject(store) }
+                else { ArtifactDetail(id:artifact.id).environmentObject(store) }
+            }
             .sheet(isPresented:Binding(get:{ installed != nil },set:{ if !$0 { installed = nil } })) {
                 if let installed,let index = store.apps.firstIndex(where:{$0.id == installed}) { MiniAppView(app:$store.apps[index]) }
             }

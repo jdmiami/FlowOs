@@ -1,3 +1,7 @@
+# FlowOS 0.5.3 — Generative UI Harness
+
+Labs now builds self-contained interactive HTML applications. Select a capable cloud coding model with an adequate output cap (8,192 or more recommended for complex apps) or use a small local prompt for simple widgets. Open runnable artifacts directly, inspect/edit source, view startup tests, save revisions, install in the library or export HTML. Up to two model requests per approved cloud build. Two offline starter apps are included. See [the agent skill](skills/generative_ui/SKILL.md) for the output contract and security model. The existing local GPU runtime and API routes are preserved. Full WebKit behavior and native iPhone compilation require device/build validation.
+
 # FlowOS 0.5.2 — Account inference (experimental)
 
 Open Models → ChatGPT plan → Continue with ChatGPT. FlowOS uses the official
