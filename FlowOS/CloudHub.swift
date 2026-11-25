@@ -32,34 +32,51 @@ enum CloudKeychain {
     @Published var messages:[String:String]=[:]
     @Published private(set) var ledger:[String:CloudUsage]=[:]
     @Published var lastUsage:CloudUsage?
-    private let session=URLSession(configuration:.ephemeral)
+    let planAuth=ChatGPTPlanAuth()
+    private var catalogOwner:String?
+    private let session=URLSession(configuration:.ephemeral,delegate:PlanNoRedirect(),delegateQueue:nil)
     init() {
-        connected=Set(CloudProvider.allCases.filter{CloudKeychain.get($0) != nil})
+        connected=Set(CloudProvider.allCases.filter{$0 != .chatgptPlan && CloudKeychain.get($0) != nil})
         let defaults=UserDefaults.standard
         if let data=defaults.data(forKey:"flow.cloud.models"),let value=try? JSONDecoder().decode([String:[CloudModel]].self,from:data){models=value}
         if let data=defaults.data(forKey:"flow.cloud.routes"),let value=try? JSONDecoder().decode([String:CloudRoute].self,from:data){routes=value}
         if let data=defaults.data(forKey:"flow.cloud.usage"),let value=try? JSONDecoder().decode([String:CloudUsage].self,from:data){ledger=value}
+        models[CloudProvider.chatgptPlan.rawValue]=nil
+        syncPlan()
     }
     private func persist<T:Encodable>(_ value:T,_ name:String) {if let data=try? JSONEncoder().encode(value){UserDefaults.standard.set(data,forKey:name)}}
+    func syncPlan() {
+        let id=planAuth.active?.id
+        if catalogOwner != id { models[CloudProvider.chatgptPlan.rawValue]=nil; catalogOwner=id }
+        if id != nil { connected.insert(.chatgptPlan) } else { connected.remove(.chatgptPlan) }
+    }
     func save(_ key:String,provider:CloudProvider) {
+        guard provider != .chatgptPlan else {return}
         let clean=key.trimmingCharacters(in:.whitespacesAndNewlines)
         guard !clean.isEmpty,!clean.contains(where:{$0.isWhitespace}) else {messages[provider.rawValue]="Enter a valid single API key.";return}
         do {try CloudKeychain.set(clean,provider:provider);connected.insert(provider);messages[provider.rawValue]="Saved on this device. Refresh models to verify access."}
         catch {messages[provider.rawValue]="Keychain storage failed."}
     }
     func disconnect(_ p:CloudProvider) {
+        guard p != .chatgptPlan else {return}
         CloudKeychain.remove(p);connected.remove(p);models[p.rawValue]=nil
         routes=routes.filter{$0.value.provider != p};persist(routes,"flow.cloud.routes");persist(models,"flow.cloud.models")
         messages[p.rawValue]="Disconnected."
     }
     func route(_ task:String)->CloudRoute? {routes[task]}
     func setRoute(_ task:String,_ route:CloudRoute?) {
-        routes[task]=route;persist(routes,"flow.cloud.routes")
+        var selected=route
+        if selected?.provider == .chatgptPlan {
+            guard let id=planAuth.active?.id,let model=selected?.model,models[CloudProvider.chatgptPlan.rawValue]?.contains(where:{$0.id==model})==true else {return}
+            selected?.planProfileID=id
+        }
+        routes[task]=selected;persist(routes,"flow.cloud.routes")
     }
     func model(_ route:CloudRoute)->CloudModel {
         models[route.provider.rawValue]?.first{$0.id==route.model} ?? CloudModel.infer(provider:route.provider,id:route.model)
     }
     func addModel(_ id:String,provider:CloudProvider) {
+        guard provider != .chatgptPlan else {return}
         let clean=id.trimmingCharacters(in:.whitespacesAndNewlines)
         guard !clean.isEmpty,clean.count<=180,clean.utf8.allSatisfy({ (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || [45,46,47,95,58].contains($0) }) else {return}
         if !(models[provider.rawValue] ?? []).contains(where:{$0.id==clean}) {
@@ -86,6 +103,7 @@ enum CloudKeychain {
         }
     }
     func refresh(_ p:CloudProvider) async {
+        if p == .chatgptPlan {await refreshPlan();return}
         guard !loading.contains(p),let key=CloudKeychain.get(p) else {return}
         loading.insert(p);defer{loading.remove(p)}
         do {
@@ -128,12 +146,37 @@ enum CloudKeychain {
             persist(models,"flow.cloud.models");messages[p.rawValue]="\(results.count) models returned. Individual inference access may vary."
         } catch {messages[p.rawValue]=error.localizedDescription}
     }
+    private func refreshPlan() async {
+        syncPlan(); let p=CloudProvider.chatgptPlan
+        guard !loading.contains(p),let id=planAuth.active?.id else {return}
+        loading.insert(p);defer{loading.remove(p)}
+        do {
+            let token=try await planAuth.accessToken(for:id)
+            let (data,response)=try await session.data(for:request(URL(string:p.modelsURL)!,provider:p,key:token));try checked(response)
+            guard let object=try JSONSerialization.jsonObject(with:data) as? [String:Any],let rows=object["models"] as? [[String:Any]],planAuth.active?.id==id else {throw fail("Account catalog unavailable.")}
+            var seen=Set<String>()
+            models[p.rawValue]=rows.compactMap { row in
+                guard row["visibility"] as? String=="list",let slug=row["slug"] as? String,seen.insert(slug).inserted else {return nil}
+                return CloudModel.infer(provider:p,id:slug,name:row["display_name"] as? String)
+            }
+            messages[p.rawValue]="Refreshed account-specific models."
+        } catch {messages[p.rawValue]=error.localizedDescription}
+    }
     func stream(route:CloudRoute,turns:[CloudTurn],system:String,onChunk:(String)->Void,onStage:(String)->Void) async throws -> String {
-        guard let key=CloudKeychain.get(route.provider) else {throw fail("Connect this provider in Model Hub first.")}
-        let p=route.provider,m=model(route)
+        let p=route.provider
+        let key:String
+        if p == .chatgptPlan {
+            guard let id=route.planProfileID,id==planAuth.active?.id else {throw fail("Re-select the ChatGPT account and model. No other account will be used.")}
+            if models[p.rawValue]==nil {await refreshPlan()}
+            guard models[p.rawValue]?.contains(where:{$0.id==route.model})==true else {throw fail("Refresh the model catalog and choose an available ChatGPT model.")}
+            key=try await planAuth.accessToken(for:id)
+        } else {
+            guard let saved=CloudKeychain.get(p) else {throw fail("Connect this provider in Model Hub first.")};key=saved
+        }
+        let m=model(route)
         let path:String
         switch p {
-        case .openai:path="https://api.openai.com/v1/responses"
+        case .openai,.chatgptPlan:path="https://api.openai.com/v1/responses"
         case .anthropic:path="https://api.anthropic.com/v1/messages"
         case .nvidia:path="https://integrate.api.nvidia.com/v1/chat/completions"
         case .gemini:
@@ -164,7 +207,7 @@ enum CloudKeychain {
             if event["error"] != nil || event["type"] as? String=="error" {throw fail("Provider returned a streaming error.")}
             var delta=""
             switch p {
-            case .openai:
+            case .openai,.chatgptPlan:
                 let type=event["type"] as? String ?? ""
                 if type=="response.output_text.delta" {delta=event["delta"] as? String ?? ""}
                 if type=="response.failed" || type=="response.incomplete" {throw fail("Response failed or reached its output limit.")}

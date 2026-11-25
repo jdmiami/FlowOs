@@ -20,8 +20,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.flowos.personal
         SWIFT_VERSION: '5.0'
-        MARKETING_VERSION: '0.5.1'
-        CURRENT_PROJECT_VERSION: '6'
+        MARKETING_VERSION: '0.5.2'
+        CURRENT_PROJECT_VERSION: '7'
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_NSSupportsLiveActivities: YES
         INFOPLIST_KEY_CADisableMinimumFrameDurationOnPhone: YES
@@ -42,7 +42,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.flowos.personal.widgets
         SWIFT_VERSION: '5.0'
-        MARKETING_VERSION: '0.5.1'
-        CURRENT_PROJECT_VERSION: '6'
+        MARKETING_VERSION: '0.5.2'
+        CURRENT_PROJECT_VERSION: '7'
         SKIP_INSTALL: YES
         APPLICATION_EXTENSION_API_ONLY: YES

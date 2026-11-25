@@ -291,5 +291,8 @@ struct SettingsView: View {
 }
 
 @MainActor func cloudApprovalAlert(_ approval:Store.CloudApproval,store:Store)->Alert {
-    Alert(title:Text("Send to \(approval.route.provider.title)?"),message:Text("\(approval.route.model) will receive this request\(approval.mode == "chat" ? " and bounded chat history" : ""). API charges may apply."),primaryButton:.default(Text("Send")){store.approveCloud(approval)},secondaryButton:.cancel())
+    let plan=approval.route.provider == .chatgptPlan
+    let account=plan ? (store.cloud.planAuth.active?.email ?? "No selected account") : ""
+    let billing=plan ? "Uses your authorized ChatGPT allowance or credits. Account: \(account)." : "API charges may apply."
+    return Alert(title:Text("Send to \(approval.route.provider.title)?"),message:Text("\(approval.route.model) will receive this request\(approval.mode == "chat" ? " and bounded chat history" : ""). \(billing)"),primaryButton:.default(Text("Send")){store.approveCloud(approval)},secondaryButton:.cancel())
 }

@@ -6,13 +6,21 @@ struct CloudProvidersView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var selected:CloudProvider?
     @State private var task="chat"
+    @State private var showPlan=false
     var body:some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment:.leading,spacing:18) {
                     FlowSectionTitle(title:"Cloud providers",subtitle:"Your keys. Your models. Your choice.")
                     Text("Optional internet inference. Prompts and selected conversation context go to the selected provider. Charges and retention depend on your API account. Local remains the default.").font(.caption).glass()
-                    ForEach(CloudProvider.allCases) { p in
+                    Button { showPlan=true } label: {
+                        HStack(spacing:12) {
+                            Image(systemName:"person.crop.circle").font(.title2).frame(width:44,height:44).liquidSurface(radius:20)
+                            VStack(alignment:.leading) { Text("ChatGPT plan").font(.headline); Text(hub.planAuth.active == nil ? "Connect an eligible subscription · experimental iOS sign-in" : "Account connected · manage subscription usage").font(.caption) }
+                            Spacer(); Image(systemName:"chevron.right")
+                        }.glass()
+                    }.buttonStyle(FlowPress()).disabled(store.busy)
+                    ForEach(CloudProvider.allCases.filter{$0 != .chatgptPlan}) { p in
                         Button { selected=p } label:{
                             HStack(spacing:12) {
                                 Image(systemName:p == .nvidia ? "cpu" : p == .gemini ? "sparkle" : "cloud").font(.title2).frame(width:44,height:44).liquidSurface(radius:20)
@@ -47,6 +55,8 @@ struct CloudProvidersView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement:.confirmationAction) { Button("Done"){dismiss()} } }
             .sheet(item:$selected) { p in CloudProviderDetail(hub:hub,provider:p) }
+            .sheet(isPresented:$showPlan) { PlanAccountView(hub:hub,auth:hub.planAuth) }
+            .onAppear {hub.syncPlan(); if hub.planAuth.active != nil {Task {await hub.refresh(.chatgptPlan)}}}
         }
     }
 }
@@ -66,6 +76,8 @@ struct CloudProviderDetail:View {
                     SecureField("Paste API key",text:$key).textInputAutocapitalization(.never).autocorrectionDisabled()
                     Button("Save key") {hub.save(key,provider:provider);key=""}.disabled(key.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || store.busy)
                     Link("Get an API key",destination:URL(string:provider.keysURL)!)
+                    if provider == .anthropic { Text("Claude consumer subscriptions cannot authorize third-party inference. Use Claude Platform API billing.").font(.caption); Link("Claude Platform linked billing (organizations)",destination:URL(string:"https://platform.claude.com/docs/en/manage-claude/oauth-apps/overview")!) }
+                    if provider == .openai { Text("Eligible Pro and Business accounts can claim API credits separately.").font(.caption); Link("ChatGPT API credit benefit",destination:URL(string:"https://developers.openai.com/api/docs/guides/chatgpt-api-credits")!) }
                     Button("Verify key & refresh models"){Task{await hub.refresh(provider)}}.disabled(!hub.connected.contains(provider) || hub.loading.contains(provider) || store.busy)
                     if hub.loading.contains(provider){ProgressView("Fetching available models")}
                     if let msg=hub.messages[provider.rawValue]{Text(msg).font(.caption)}
@@ -121,9 +133,11 @@ struct CloudRouteEditor:View {
                 Picker("Reasoning effort",selection:$effort){
                     ForEach(model?.efforts ?? [.automatic]){e in Text(e.title).tag(e)}
                 }
-                Picker("Output token cap",selection:$output){
-                    ForEach([512,1024,2048,4096,8192,16384,32768],id:\.self){n in Text("\(n)").tag(n)}
-                }
+                if selected != .chatgptPlan {
+                    Picker("Output token cap",selection:$output){
+                        ForEach([512,1024,2048,4096,8192,16384,32768],id:\.self){n in Text("\(n)").tag(n)}
+                    }
+                } else { Text("ChatGPT plan preview does not accept an API output-token cap. Use lower effort and manage app limits in ChatGPT.").font(.caption) }
                 Picker("Context size (characters)",selection:$context){
                     ForEach([4000,12000,32000,64000,120000],id:\.self){n in Text("\(n)").tag(n)}
                 }
@@ -153,7 +167,7 @@ struct ChatBackendPicker: View {
                 Image(systemName:hub.route(mode)==nil ? "iphone" : "cloud")
                 VStack(alignment:.leading,spacing:2) {
                     Text(hub.route(mode).map{$0.provider.title+" · "+$0.model} ?? "On-device AI").font(.caption.weight(.semibold)).lineLimit(1)
-                    if let r=hub.route(mode) {Text(r.effort.title+" · "+String(r.maxOutput)+" output cap").font(.caption2)}
+                    if let r=hub.route(mode) {Text(r.effort.title+(r.provider == .chatgptPlan ? " · Plan allowance" : " · "+String(r.maxOutput)+" output cap")).font(.caption2)}
                     else {Text("Local · no API charges").font(.caption2)}
                 }
                 Spacer()
@@ -169,6 +183,68 @@ struct ChatBackendPicker: View {
                 .navigationTitle("Select model").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement:.confirmationAction){Button("Done"){show=false}} }
             }.presentationDetents([.large])
+        }
+    }
+}
+
+struct PlanAccountView: View {
+    @ObservedObject var hub:CloudHub
+    @ObservedObject var auth:ChatGPTPlanAuth
+    @EnvironmentObject var store:Store
+    @Environment(\.dismiss) private var dismiss
+    @State private var signOut:PlanProfile?
+    var body:some View {
+        NavigationStack {
+            Form {
+                Section("ChatGPT subscription") {
+                    Text("Use your own eligible ChatGPT plan for FlowOS requests. This uses included allowance or authorized credits, not a shared API key. It does not import ChatGPT history or memories.").font(.caption)
+                    Text("Experimental iPhone browser callback. If sign-in cannot complete, use local AI or an API key.").font(.caption)
+                    Button("Continue with ChatGPT") {auth.start()}.disabled(auth.busy || store.busy)
+                    if auth.busy {ProgressView("Authorizing");Button("Cancel sign-in"){auth.cancel()}}
+                    if !auth.message.isEmpty {Text(auth.message).font(.caption)}
+                    Link("Manage plan usage",destination:URL(string:"https://chatgpt.com/")!)
+                    Link("Sign-in documentation",destination:URL(string:"https://help.openai.com/en/articles/20001542-using-your-chatgpt-plan-in-other-apps-and-sites")!)
+                }
+                Section("Saved accounts") {
+                    ForEach(auth.profiles) { p in
+                        VStack(alignment:.leading,spacing:8) {
+                            Text(p.email).font(.headline)
+                            Text("Registration "+String(p.clientID.suffix(8))+(auth.activeID==p.id && p.enabled ? " · Active" : "")).font(.caption)
+                            if p.enabled {
+                                Button("Select account") {auth.select(p.id);hub.syncPlan();Task{await hub.refresh(.chatgptPlan)}}.disabled(auth.busy || store.busy || auth.activeID==p.id)
+                                Button("Sign out",role:.destructive){signOut=p}.disabled(auth.busy || store.busy)
+                            } else {
+                                Button("Reconnect") {auth.start(existing:p)}.disabled(auth.busy || store.busy)
+                            }
+                        }
+                    }
+                }
+                Section("Available models") {
+                    Button("Refresh account models"){Task{await hub.refresh(.chatgptPlan)}}.disabled(auth.active==nil || hub.loading.contains(.chatgptPlan) || store.busy)
+                    if hub.loading.contains(.chatgptPlan){ProgressView()}
+                    if let msg=hub.messages[CloudProvider.chatgptPlan.rawValue]{Text(msg).font(.caption)}
+                    ForEach(hub.models[CloudProvider.chatgptPlan.rawValue] ?? []) { m in
+                        VStack(alignment:.leading) {
+                            Text(m.name).font(.headline)
+                            Menu("Assign model") {
+                                ForEach(["chat","app","workflow","theme"],id:\.self){task in
+                                    Button(task.capitalized){hub.setRoute(task,.init(provider:.chatgptPlan,model:m.id))}
+                                }
+                            }.disabled(auth.active==nil || store.busy)
+                        }
+                    }
+                }
+            }.navigationTitle("ChatGPT plan")
+            .toolbar {ToolbarItem(placement:.confirmationAction){Button("Done"){if auth.busy {auth.cancel()};dismiss()}}}
+            .sheet(isPresented:Binding(get:{auth.browserURL != nil},set:{value in if !value && auth.browserURL != nil {auth.cancel()}})) {
+                if let url=auth.browserURL {PlanBrowser(url:url).ignoresSafeArea()}
+            }
+            .alert("Sign out of ChatGPT?",isPresented:Binding(get:{signOut != nil},set:{if !$0{signOut=nil}}),presenting:signOut) { p in
+                Button("Sign out",role:.destructive){signOut=nil;Task{await auth.signOut(p.id);hub.syncPlan()}}
+                Button("Cancel",role:.cancel){signOut=nil}
+            } message:{_ in Text("This stops FlowOS requests using this registration.")}
+            .onChange(of:auth.activeID){_,_ in hub.syncPlan();Task{await hub.refresh(.chatgptPlan)}}
+            .onChange(of:auth.busy){_,busy in if !busy {hub.syncPlan()}}
         }
     }
 }

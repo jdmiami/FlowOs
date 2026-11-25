@@ -1,3 +1,34 @@
+# FlowOS 0.5.2 — Account inference (experimental)
+
+Open Models → ChatGPT plan → Continue with ChatGPT. FlowOS uses the official
+open-source/local-client OAuth flow with a loopback callback, PKCE, verified
+RS256 identity tokens and device-only Keychain credentials. The iOS browser
+callback and authenticated inference require physical-device testing. The
+existing local and API-key paths remain available.
+
+Eligible users may authorize their own ChatGPT allowance/credits. Sign-in
+does not import ChatGPT conversations, memories, or API keys. Select an
+account, refresh its catalog and assign an available model to a FlowOS task.
+Switching accounts requires deliberate model reassignment; never pool accounts
+or rotate accounts to evade limits. Manage usage and disconnect access in
+ChatGPT Settings. The plan route does not accept max_output_tokens in the
+preview; it uses streaming, store:false, explicit bounded context, and
+supported reasoning effort. No silent API-key fallback. No background plan use.
+
+For Claude, consumer subscription login is not permitted for third-party
+inference. Use your Claude Platform API key. The organizational linked-billing
+OAuth beta requires registered backend/IdP infrastructure and is not implemented
+here. Eligible ChatGPT Pro/Business users can separately claim API credits and
+use the OpenAI API-key path. No license change is made by this update; review
+eligibility and licensing before distributing commercially.
+
+Official references:
+- https://developers.openai.com/siwc/token-sharing-open-source
+- https://developers.openai.com/siwc/token-sharing-open-source/preview-limitations
+- https://openai.com/policies/sign-in-with-chatgpt-terms/
+- https://code.claude.com/docs/en/legal-and-compliance
+- https://platform.claude.com/docs/en/manage-claude/oauth-apps/overview
+
 # FlowOS 0.5.1 — Hybrid Inference
 
 ## Cloud providers

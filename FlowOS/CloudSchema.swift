@@ -1,11 +1,11 @@
 import Foundation
 
 enum CloudProvider: String, CaseIterable, Identifiable, Codable {
-    case openai, anthropic, gemini, nvidia
+    case openai, anthropic, gemini, nvidia, chatgptPlan
     var id: String { rawValue }
-    var title: String { switch self { case .openai:return "OpenAI"; case .anthropic:return "Anthropic"; case .gemini:return "Google Gemini"; case .nvidia:return "NVIDIA NIM" } }
-    var modelsURL: String { switch self { case .openai:return "https://api.openai.com/v1/models"; case .anthropic:return "https://api.anthropic.com/v1/models?limit=100"; case .gemini:return "https://generativelanguage.googleapis.com/v1beta/models?pageSize=100"; case .nvidia:return "https://integrate.api.nvidia.com/v1/models" } }
-    var keysURL: String { switch self { case .openai:return "https://platform.openai.com/api-keys"; case .anthropic:return "https://console.anthropic.com/settings/keys"; case .gemini:return "https://aistudio.google.com/apikey"; case .nvidia:return "https://build.nvidia.com/" } }
+    var title: String { switch self { case .chatgptPlan:return "ChatGPT plan"; case .openai:return "OpenAI API"; case .anthropic:return "Anthropic"; case .gemini:return "Google Gemini"; case .nvidia:return "NVIDIA NIM" } }
+    var modelsURL: String { switch self { case .openai,.chatgptPlan:return "https://api.openai.com/v1/models"; case .anthropic:return "https://api.anthropic.com/v1/models?limit=100"; case .gemini:return "https://generativelanguage.googleapis.com/v1beta/models?pageSize=100"; case .nvidia:return "https://integrate.api.nvidia.com/v1/models" } }
+    var keysURL: String { switch self { case .chatgptPlan:return "https://chatgpt.com/"; case .openai:return "https://platform.openai.com/api-keys"; case .anthropic:return "https://console.anthropic.com/settings/keys"; case .gemini:return "https://aistudio.google.com/apikey"; case .nvidia:return "https://build.nvidia.com/" } }
 }
 enum CloudEffort: String, CaseIterable, Codable, Identifiable {
     case automatic, low, medium, high, xhigh, max
@@ -23,7 +23,7 @@ struct CloudModel: Codable, Identifiable, Equatable {
         let s=id.lowercased()
         var m=CloudModel(id:id,name:name ?? id)
         switch provider {
-        case .openai:
+        case .openai,.chatgptPlan:
             if s.hasPrefix("gpt-6.2-astra") || s.hasPrefix("gpt-6.2-sol") || s.hasPrefix("gpt-6.1-terra") || s.hasPrefix("gpt-6-luna") {
                 m.efforts=[.automatic,.low,.medium,.high,.xhigh,.max]; m.thinking="openai"
             } else if s.hasPrefix("gpt-5") || s.hasPrefix("o3") || s.hasPrefix("o4") || s.hasPrefix("o1") {
@@ -50,6 +50,7 @@ struct CloudRoute: Codable, Equatable {
     var effort: CloudEffort = .automatic
     var maxOutput: Int = 2048
     var contextCharacters: Int = 12000
+    var planProfileID: String? = nil
 }
 struct CloudUsage: Codable, Equatable {
     var input=0
@@ -69,8 +70,9 @@ enum CloudPayload {
         let messages=turns.map { ["role":$0.role,"content":$0.text] }
         var body:[String:Any]
         switch provider {
-        case .openai:
+        case .openai,.chatgptPlan:
             body=["model":model.id,"input":messages,"instructions":system,"stream":true,"store":false,"max_output_tokens":cap]
+            if provider == .chatgptPlan { body.removeValue(forKey:"max_output_tokens") }
             if effort != .automatic && model.thinking=="openai" { body["reasoning"]=["effort":effort.rawValue] }
         case .anthropic:
             body=["model":model.id,"messages":messages,"system":system,"stream":true,"max_tokens":cap]
